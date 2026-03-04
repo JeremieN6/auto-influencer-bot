@@ -1,0 +1,61 @@
+{
+  "locations": [
+    "bedroom mirror",
+    "beach at sunset",
+    "cafe terrace Paris",
+    "poolside luxury",
+    "rooftop city view",
+    "bathroom vanity",
+    "hotel room morning",
+    "forest path golden hour",
+    "kitchen counter",
+    "balcony with city skyline",
+    "linen sofa living room",
+    "outdoor terrace white stone"
+  ],
+  "outfits": [
+    "white crop top + high waist jeans",
+    "black bikini",
+    "beige linen dress",
+    "oversized grey hoodie",
+    "satin slip dress nude",
+    "sport bra + leggings",
+    "blazer only no shirt",
+    "floral summer dress",
+    "white button-down shirt half open",
+    "long cardigan + cycling shorts"
+  ],
+  "poses": [
+    "mirror selfie arm raised",
+    "over shoulder looking back",
+    "sitting legs crossed candid",
+    "standing profile arms relaxed",
+    "lying on bed reading",
+    "walking looking down",
+    "leaning against wall",
+    "head tilted soft smile",
+    "sitting on floor hugging knees",
+    "standing in doorway backlit"
+  ],
+  "moods": [
+    "playful smile",
+    "sultry soft look",
+    "candid laugh eyes closed",
+    "serene gaze distance",
+    "confident direct eye contact",
+    "contemplative looking away",
+    "warm natural smile",
+    "relaxed eyes half-closed",
+    "focused reading or scrolling"
+  ],
+  "lighting": [
+    "golden hour warm backlight",
+    "soft diffused indoor",
+    "bright natural window light",
+    "warm sunset side light",
+    "cool morning light",
+    "candlelight intimate",
+    "overcast outdoor soft",
+    "harsh midday sun editorial"
+  ]
+}

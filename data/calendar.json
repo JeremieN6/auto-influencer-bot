@@ -1,0 +1,33 @@
+{
+  "cycle": [
+    {
+      "step": 1,
+      "format": "4:5",
+      "type": "feed",
+      "hashtags": true,
+      "note": "Post principal feed"
+    },
+    {
+      "step": 2,
+      "format": "9:16",
+      "type": "story",
+      "hashtags": false,
+      "note": "Story immersive"
+    },
+    {
+      "step": 3,
+      "format": "4:5",
+      "type": "feed",
+      "hashtags": true,
+      "note": "Post principal feed"
+    },
+    {
+      "step": 4,
+      "format": "9:16",
+      "type": "story",
+      "hashtags": false,
+      "note": "Story immersive"
+    }
+  ],
+  "note": "Carrousel 1:1 en attente de validation manuelle avant intégration. TikTok publisher prévu en V2."
+}

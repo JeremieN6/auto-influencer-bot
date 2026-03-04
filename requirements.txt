@@ -1,0 +1,30 @@
+# ================================================================
+# requirements.txt
+# Python 3.11+
+# ================================================================
+
+# Google Gemini API (nouveau SDK — remplace google-generativeai déprécié)
+google-genai>=1.0.0
+
+# Anthropic Claude API
+anthropic>=0.34.0
+
+# Telegram Bot
+python-telegram-bot>=20.0
+
+# Playwright (scraping Pinterest)
+playwright>=1.40.0
+
+# Image manipulation
+Pillow>=10.0
+
+# HTTP requests (Meta Graph API)
+requests>=2.31
+
+# Variables d'environnement
+python-dotenv>=1.0
+
+# ================================================================
+# Post-install :
+#   playwright install chromium
+# ================================================================

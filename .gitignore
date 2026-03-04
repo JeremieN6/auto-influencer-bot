@@ -1,0 +1,59 @@
+# Environnement
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.venv/
+venv/
+env/
+ENV/
+
+# Outputs (images générées — transient)
+outputs/*.jpg
+outputs/*.jpeg
+outputs/*.png
+outputs/*.webp
+
+# Logs
+logs/*.log
+logs/cron.log
+
+# Données runtime (historique généré automatiquement)
+data/history.json
+data/pending_state.json
+
+# Image de référence (ne pas commit — données sensibles/propriétaires)
+data/ref_*.jpg
+data/ref_*.jpeg
+data/ref_*.png
+data/ref_*.webp
+data/ref_*.avif
+
+# Fichiers temporaire / de travail
+/temp/
+*.tmp
+
+# System
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Playwright
+playwright-report/
+test-results/
