@@ -134,8 +134,12 @@ def _copy_to_nginx(local_path: str, filename: str) -> str:
     try:
         os.makedirs(NGINX_OUTPUT_DIR, exist_ok=True)
         nginx_path = os.path.join(NGINX_OUTPUT_DIR, filename)
-        shutil.copy(local_path, nginx_path)
         public_url = f"{NGINX_BASE_URL}/{filename}"
+        # Si outputs/ et NGINX_OUTPUT_DIR pointent vers le même dossier, pas besoin de copier
+        if os.path.abspath(local_path) == os.path.abspath(nginx_path):
+            logger.info(f"Image déjà dans le dossier nginx : {nginx_path} → {public_url}")
+            return public_url
+        shutil.copy(local_path, nginx_path)
         logger.info(f"Image copiée vers nginx : {nginx_path} → {public_url}")
         return public_url
     except Exception as e:
