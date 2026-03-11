@@ -60,3 +60,6 @@ test-results/
 
 #Prompt
 PROMPTS/
+
+#Scripts de développement
+scripts/
