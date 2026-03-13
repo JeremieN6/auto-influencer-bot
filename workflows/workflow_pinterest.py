@@ -18,6 +18,8 @@ FLUX COMPLET :
         ↓
   [Gemini Vision — PROMPT_IMAGE_TO_JSON → JSON de scène]
         ↓
+  [inject_madison_body() — injection du bloc corps fixe de Madison dans le JSON]
+        ↓
   [Gemini — PROMPT_JSON_TO_IMAGE + référence influenceuse → image finale]
         ↓
   [Sauvegarde dans outputs/ + copie vers nginx]
@@ -30,7 +32,7 @@ Appelé par : main.run_pipeline(workflow="pinterest")
 import json
 import os
 
-from image_generator import generate_image, image_to_json
+from image_generator import generate_image, image_to_json, inject_madison_body
 from logger import get_logger, log_section, log_step
 from prompts import PROMPT_JSON_TO_IMAGE
 
@@ -87,6 +89,14 @@ def run(concept: dict) -> tuple[str, str, str]:
     scene_json = image_to_json(inspiration_path)
     logger.info(f"JSON de scène extrait — clés : {list(scene_json.keys())}")
     logger.debug(f"JSON complet : {json.dumps(scene_json, indent=2, ensure_ascii=False)[:800]}...")
+
+    # ── Injection du corps fixe de Madison ──────────────────────
+    # Le JSON extrait de Pinterest ne contient pas de description corporelle.
+    # inject_madison_body() greffe le bloc subject.body avec les formules
+    # anatomiques gagnantes (hourglass, proportions, etc.) pour garantir
+    # la cohérence du corps à chaque génération.
+    scene_json = inject_madison_body(scene_json)
+    logger.info("Bloc corps Madison injecté dans le JSON de scène")
 
     # Nettoyer l'image Pinterest source (elle n'est plus nécessaire)
     _cleanup_inspiration(inspiration_path)

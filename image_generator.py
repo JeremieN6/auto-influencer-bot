@@ -244,6 +244,91 @@ def image_to_json(image_path: str) -> dict:
 
 
 # ================================================================
+# inject_madison_body — cohérence corporelle inter-générations
+# ================================================================
+
+def inject_madison_body(scene_json: dict) -> dict:
+    """
+    Injecte le bloc corps fixe de Madison dans un JSON de scène extrait de Pinterest.
+
+    Le JSON retourné par image_to_json() décrit la scène (décor, lumière, tenue)
+    mais ne contient aucune description corporelle. Cette fonction garantit que
+    Madison aura toujours les mêmes proportions à chaque génération, quelle que
+    soit l'image Pinterest source.
+
+    Args:
+        scene_json : dict retourné par image_to_json()
+
+    Returns:
+        dict : scene_json enrichi avec subject.body et subject.face de Madison
+    """
+    import copy
+    enriched = copy.deepcopy(scene_json)
+
+    # Récupérer le vêtement du haut depuis le JSON Pinterest si disponible,
+    # pour contextualiser "stretching the {top_garment}" avec le vêtement réel.
+    top_garment = "top garment"
+    try:
+        wardrobe = enriched.get("subject", {}).get("wardrobe", {})
+        top_raw = wardrobe.get("top", "") or wardrobe.get("top_garment", "")
+        if top_raw:
+            # Extraire les premiers mots (ex: "White triangle bikini top, ..." → "white triangle bikini top")
+            top_garment = top_raw.split(",")[0].strip().lower()
+    except Exception:
+        pass  # fallback silencieux sur "top garment"
+
+    # Bloc corps fixe — formules anatomiques gagnantes
+    madison_body = {
+        "physique": (
+            f"Voluptuous hourglass figure with significantly enlarged breasts that fill the {top_garment}. "
+            "Narrow defined waist leading to wider hips and prominent glutes. "
+            "Muscle tone visible in core and legs."
+        ),
+        "anatomy": {
+            "shoulders": "Defined, proportional.",
+            "waist": "Narrow, defined waist.",
+            "hips": "Wide hips with prominent glutes.",
+            "breasts": (
+                f"Extremely large, very full breasts causing cleavage and stretching the {top_garment}."
+            ),
+            "waist_to_hip_ratio": "Pronounced hourglass.",
+        },
+        "skin": {
+            "tone": "Warm light beige, natural sun-kissed California glow.",
+            "texture": "Visible pores, natural skin texture, not airbrushed, raw photo.",
+            "details": "No tattoos.",
+        },
+    }
+
+    # Bloc visage fixe de Madison
+    madison_face = {
+        "hair": "Dirty blonde.",
+        "eyes": "Light blue-grey.",
+        "features": "Soft facial features, natural makeup.",
+        "skin": "Clear, freckle-free, warm beige tone.",
+    }
+
+    # Garantir que subject existe
+    if "subject" not in enriched:
+        enriched["subject"] = {}
+
+    # Injecter — on écrase body et face car ils doivent toujours décrire Madison,
+    # pas le personnage de l'image Pinterest source
+    enriched["subject"]["description"] = (
+        "A young blonde woman named Madison, californian aesthetic, mid-20s."
+    )
+    enriched["subject"]["body"] = madison_body
+    enriched["subject"]["face"] = madison_face
+
+    logger.debug(
+        f"inject_madison_body — top_garment détecté : '{top_garment}' | "
+        f"clés subject : {list(enriched['subject'].keys())}"
+    )
+
+    return enriched
+
+
+# ================================================================
 # Workflow génératif V2 — build JSON + génération image
 # ================================================================
 
