@@ -1,44 +1,38 @@
 """
 workflows/workflow_generatif.py — Workflow V2 : génération 100% IA sans Pinterest.
 
-================================================================
-V2 — SCAFFOLD — NON IMPLÉMENTÉ
-================================================================
-
 DESCRIPTION :
-  Claude remplace Pinterest : il lit variables.json et imagine la scène lui-même
-  en générant un JSON de scène complet via PROMPT_GENERATIVE_SCENE.
-  Plus aucune dépendance externe (pas de scraping).
+  Pas de scraping externe. Le concept est tiré depuis variables.json par concept_generator.
+  image_generator.build_madison_json() assemble un JSON de scène complet depuis le template
+  MADISON_JSON_TEMPLATE (prompts.py), puis Gemini génère l'image finale avec la référence
+  de l'influenceuse.
 
-FLUX V2 :
-  [variables.json — tirage aléatoire de tous les paramètres]
+FLUX :
+  [variables.json — tirage aléatoire mood + location + outfit + pose + lighting]
         ↓
-  [Claude API — PROMPT_GENERATIVE_SCENE — génère un JSON de scène complet]
+  [image_generator.build_madison_json() — mappe les valeurs vers MADISON_JSON_TEMPLATE]
         ↓
-  [Gemini — PROMPT_JSON_TO_IMAGE + référence influenceuse → image finale]
+  [image_generator.generate_image_from_concept() — PROMPT_JSON_TO_IMAGE + ref image → Gemini]
         ↓
-  [Claude API — PROMPT_CAPTION_TEMPLATE → caption + hashtags selon calendrier]
+  [Sauvegarde dans outputs/ + copie vers nginx]
         ↓
-  [Telegram — envoi pour validation humaine]
-        ↓
-  [Instagram — publication sur approbation /validate]
-          (publication autonome activable en V2 quand décidé)
+  [Retourne (local_path, public_url, filename)]
 
-AVANTAGES V2 vs V1 :
+AVANTAGES vs workflow_pinterest.py :
   - Pas de dépendance Pinterest (plus stable, pas de blocage)
-  - Scènes 100% originales, jamais vues sur internet
-  - Cohérence parfaite avec le style de l'influenceuse
+  - Scènes 100% originales, cohérentes avec le style Madison
+  - JSON de scène entièrement contrôlé (pas d'image source aléatoire)
 
-TODO V2 :
-  1. Implémenter _generate_scene_json() via Claude (PROMPT_GENERATIVE_SCENE)
-  2. Implémenter run() en appelant image_generator.generate_image()
-  3. Tester la qualité des scènes générées vs Pinterest
-  4. Activer en changeant workflow="generatif" dans main.py
+Appelé par : main.run_pipeline(workflow="generatif")
 """
 
-from logger import get_logger
+from concept_generator import get_current_calendar_step
+from image_generator import generate_image_from_concept
+from logger import get_logger, log_section, log_step
 
 logger = get_logger(__name__)
+
+TOTAL_STEPS = 2
 
 
 def run(concept: dict) -> tuple[str, str, str]:
@@ -47,18 +41,36 @@ def run(concept: dict) -> tuple[str, str, str]:
 
     Args:
         concept : dict généré par concept_generator.generate_concept()
+                  {location, outfit, pose, mood, lighting, generated_at}
 
     Returns:
         (local_path, public_url, filename)
 
     Raises:
-        NotImplementedError : V2 non encore implémenté
+        FileNotFoundError : si l'image de référence influenceuse est absente
+        ValueError        : si Gemini échoue à retourner une image
     """
-    raise NotImplementedError(
-        "Workflow génératif V2 non encore implémenté. "
-        "Utiliser workflow='pinterest' pour la V1. "
-        "Voir les TODO dans workflows/workflow_generatif.py"
+    log_section("workflow_generatif", "DÉMARRAGE WORKFLOW GÉNÉRATIF V2")
+
+    # ── Étape 1 : Assemblage JSON de scène ───────────────────────
+    log_step("workflow_generatif", 1, TOTAL_STEPS, "Assemblage JSON + appel Gemini")
+    logger.info(
+        f"Concept : {concept['mood']} | {concept['outfit']} | "
+        f"{concept['location']} | {concept['lighting']}"
     )
+
+    calendar_step = get_current_calendar_step()
+    logger.info(f"Format : {calendar_step['format']} | Type : {calendar_step['type']}")
+
+    # ── Étape 2 : Génération image ────────────────────────────────
+    log_step("workflow_generatif", 2, TOTAL_STEPS, "Génération image Gemini")
+    local_path, public_url, filename = generate_image_from_concept(concept, calendar_step)
+
+    logger.info(f"Image finale : {local_path}")
+    logger.info(f"URL publique : {public_url}")
+
+    log_section("workflow_generatif", "WORKFLOW GÉNÉRATIF TERMINÉ")
+    return local_path, public_url, filename
 
     # ================================================================
     # TODO V2 — Implémentation à venir

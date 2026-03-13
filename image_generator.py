@@ -2,9 +2,11 @@
 image_generator.py — Génération et analyse d'images via Gemini API (google-genai SDK).
 
 Responsabilités :
-- generate_image()       : génère une image depuis un prompt + image de référence
-- image_to_json()        : analyse une image Pinterest → JSON de scène (PROMPT_IMAGE_TO_JSON)
-- cleanup_nginx()        : supprime l'image du dossier nginx après publication Instagram
+- generate_image()              : génère une image depuis un prompt + image de référence
+- image_to_json()               : analyse une image Pinterest → JSON de scène (PROMPT_IMAGE_TO_JSON)
+- build_madison_json()          : assemble le JSON final depuis MADISON_JSON_TEMPLATE + concept
+- generate_image_from_concept() : point d'entrée workflow_generatif — JSON → Gemini → image
+- cleanup_nginx()               : supprime l'image du dossier nginx après publication Instagram
 
 SDK : google-genai (remplace google-generativeai déprécié)
 https://github.com/googleapis/python-genai
@@ -14,9 +16,11 @@ Formats supportés pour l'image de référence : .jpg, .jpeg, .png, .webp, .avif
     Vérifier leur disponibilité sur https://ai.google.dev/models
 """
 
+import copy
 import io
 import json
 import os
+import random
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -237,6 +241,639 @@ def image_to_json(image_path: str) -> dict:
     except json.JSONDecodeError as e:
         logger.error(f"JSON invalide retourné par Gemini : {e}\nContenu : {raw_text[:500]}")
         raise ValueError(f"Gemini a retourné un JSON invalide : {e}") from e
+
+
+# ================================================================
+# Workflow génératif V2 — build JSON + génération image
+# ================================================================
+
+# Lookup tables : mappe les valeurs simples de variables.json
+# vers les champs détaillés attendus par MADISON_JSON_TEMPLATE.
+
+_OUTFIT_MAP: dict[str, dict] = {
+    "white crop top + high waist jeans": {
+        "top_garment":       "white crop top",
+        "top_description":   "White fitted crop top, stretched tight over her large bust",
+        "bottom_description": "High-waist white denim jeans, fitted at the waist",
+    },
+    "black bikini": {
+        "top_garment":       "black bikini top",
+        "top_description":   "Black triangle bikini top, stretched over very large breasts, causing visible cleavage",
+        "bottom_description": "Matching black string bikini bottoms",
+    },
+    "beige linen dress": {
+        "top_garment":       "beige linen dress",
+        "top_description":   "Loose beige linen dress, draped over her curves, slightly fitted at the bust",
+        "bottom_description": "Same beige linen dress flowing below the hips",
+    },
+    "oversized grey hoodie": {
+        "top_garment":       "oversized grey hoodie",
+        "top_description":   "Oversized grey hoodie worn casually, slightly off one shoulder",
+        "bottom_description": "Hoodie covers upper thighs, no visible bottom",
+    },
+    "satin slip dress nude": {
+        "top_garment":       "nude satin slip dress",
+        "top_description":   "Thin nude satin slip dress, clinging to her curves and full bust",
+        "bottom_description": "Same satin slip dress flowing past the hips",
+    },
+    "sport bra + leggings": {
+        "top_garment":       "sports bra",
+        "top_description":   "Black sports bra, stretched over full natural bust, minimal coverage",
+        "bottom_description": "High-waist black leggings, fitted and form-hugging",
+    },
+    "blazer only no shirt": {
+        "top_garment":       "blazer",
+        "top_description":   "Oversized blazer worn directly on skin with no shirt, slightly open in front",
+        "bottom_description": "Blazer barely covers hips, minimal visible bottom",
+    },
+    "floral summer dress": {
+        "top_garment":       "floral summer dress",
+        "top_description":   "Floral print summer dress, fitted at the bust, light flowing fabric",
+        "bottom_description": "Same floral dress flowing loosely past the hips",
+    },
+    "white button-down shirt half open": {
+        "top_garment":       "white button-down shirt",
+        "top_description":   "White button-down shirt, half open, slightly off one shoulder, knotted at waist",
+        "bottom_description": "Shirt drapes over hips, no visible separate bottom",
+    },
+    "long cardigan + cycling shorts": {
+        "top_garment":       "long cardigan",
+        "top_description":   "Long oversized cardigan, open front, cozy texture",
+        "bottom_description": "Black cycling shorts, form-fitting and high-waisted",
+    },
+}
+
+_LIGHTING_MAP: dict[str, dict] = {
+    "golden hour warm backlight": {
+        "type":    "Golden hour sunlight from behind the subject",
+        "quality": "Warm golden-orange, directional backlight",
+        "shadows": "Long soft shadows toward camera, warm rim light glow",
+    },
+    "soft diffused indoor": {
+        "type":    "Soft indoor ambient light",
+        "quality": "Diffused, even, no harsh shadows",
+        "shadows": "Very soft, almost shadowless",
+    },
+    "bright natural window light": {
+        "type":    "Natural daylight from large window",
+        "quality": "Bright, crisp, cool-white directional light",
+        "shadows": "Clean, defined directional shadows from window",
+    },
+    "warm sunset side light": {
+        "type":    "Warm sunset golden light from the side",
+        "quality": "Warm amber-orange, strong directional side light",
+        "shadows": "Deep warm side shadows, dramatic and moody",
+    },
+    "cool morning light": {
+        "type":    "Soft cool morning daylight",
+        "quality": "Soft, cool-blue, diffused morning light",
+        "shadows": "Gentle, minimal, cool-toned shadows",
+    },
+    "candlelight intimate": {
+        "type":    "Warm flickering candlelight",
+        "quality": "Intimate, warm orange-amber glow",
+        "shadows": "Deep moody shadows with warm highlights",
+    },
+    "overcast outdoor soft": {
+        "type":    "Overcast outdoor daylight",
+        "quality": "Flat, even, milky-white diffused light",
+        "shadows": "Near shadowless, very soft and even",
+    },
+    "harsh midday sun editorial": {
+        "type":    "Harsh direct midday sunlight",
+        "quality": "High contrast, bright white, editorial quality",
+        "shadows": "Sharp, deep, hard shadows",
+    },
+}
+
+_LOCATION_BACKGROUND_MAP: dict[str, str] = {
+    "bedroom mirror":           "Bedroom seen through a large full-length mirror, unmade white linen bedding, window with soft natural light, white walls",
+    "beach at sunset":          "Sandy beach at golden hour, warm ocean horizon, gentle waves, pink-orange sky",
+    "cafe terrace Paris":       "Parisian café terrace, small round tables, rattan chairs, cobblestone street, soft afternoon light",
+    "poolside luxury":          "Edge of a luxury pool, clear turquoise water, white marble tiles, sun deck chairs in background",
+    "rooftop city view":        "Urban rooftop, open city skyline stretching to the horizon, late afternoon sky",
+    "bathroom vanity":          "Modern bathroom with large vanity mirror, marble countertop, warm vanity strip lighting",
+    "hotel room morning":       "Minimalist hotel room, soft white bed linen, large window with morning light flooding in",
+    "forest path golden hour":  "Forest path lined with tall trees, golden light filtering through leaves, dappled light patterns on the ground",
+    "kitchen counter":          "Modern white kitchen, marble countertop, natural light from a nearby window",
+    "balcony with city skyline": "Open balcony with metal railing, city skyline visible below, open blue sky above",
+    "linen sofa living room":   "Cozy living room, natural linen sofa, books and plants on shelves, warm ambient lamplight",
+    "outdoor terrace white stone": "Mediterranean-style outdoor terrace, white stone walls, terracotta pots, warm blue-sky backdrop",
+}
+
+_POSE_CAMERA_MAP: dict[str, dict] = {
+    "mirror selfie arm raised": {
+        "pose_description": "Standing facing a full-length mirror, arm raised holding smartphone to take a selfie, body slightly angled",
+        "camera_type":      "Smartphone camera mirror selfie",
+        "lens_type":        "Wide-angle smartphone lens",
+        "camera_angle":     "Eye-level from the mirror reflection",
+    },
+    "over shoulder looking back": {
+        "pose_description": "Walking away from camera, head turned to look back over shoulder with natural ease",
+        "camera_type":      "DSLR candid capture",
+        "lens_type":        "50mm portrait lens",
+        "camera_angle":     "Eye-level from behind, slight three-quarter angle",
+    },
+    "sitting legs crossed candid": {
+        "pose_description": "Sitting casually on a surface, legs loosely crossed, relaxed candid posture",
+        "camera_type":      "DSLR candid portrait",
+        "lens_type":        "35mm lens",
+        "camera_angle":     "Eye-level, candid",
+    },
+    "standing profile arms relaxed": {
+        "pose_description": "Standing in profile view, arms relaxed at sides, neutral confident stance",
+        "camera_type":      "DSLR editorial portrait",
+        "lens_type":        "85mm portrait lens",
+        "camera_angle":     "Profile view, eye-level",
+    },
+    "lying on bed reading": {
+        "pose_description": "Lying on bed on stomach, propped comfortably on elbows, looking at phone or reading",
+        "camera_type":      "DSLR angled shot from above",
+        "lens_type":        "35mm lens",
+        "camera_angle":     "Slightly high angle, looking down",
+    },
+    "walking looking down": {
+        "pose_description": "Walking casually, looking down at phone, candid street-style movement",
+        "camera_type":      "DSLR candid street photography",
+        "lens_type":        "35mm lens",
+        "camera_angle":     "Eye-level, candid from the front",
+    },
+    "leaning against wall": {
+        "pose_description": "Leaning relaxed against a wall, arms loosely at sides, confident casual stance",
+        "camera_type":      "DSLR portrait",
+        "lens_type":        "50mm lens",
+        "camera_angle":     "Eye-level, straight on",
+    },
+    "head tilted soft smile": {
+        "pose_description": "Standing or sitting, head gently tilted to one side, warm natural expression",
+        "camera_type":      "DSLR close portrait",
+        "lens_type":        "85mm portrait lens",
+        "camera_angle":     "Slightly above eye-level",
+    },
+    "sitting on floor hugging knees": {
+        "pose_description": "Sitting on floor, knees pulled up to chest, arms wrapped around knees, intimate pose",
+        "camera_type":      "DSLR intimate portrait",
+        "lens_type":        "50mm lens",
+        "camera_angle":     "Eye-level from slightly above",
+    },
+    "standing in doorway backlit": {
+        "pose_description": "Standing in a doorway, body backlit by light pouring in from behind, slightly silhouetted with details visible",
+        "camera_type":      "DSLR backlit portrait",
+        "lens_type":        "35mm lens",
+        "camera_angle":     "Eye-level, straight-on from the front",
+    },
+}
+
+_MOOD_EXPRESSION_MAP: dict[str, str] = {
+    "playful smile":               "playful smile, bright and expressive eyes",
+    "sultry soft look":            "sultry expression, soft half-smile, relaxed gaze",
+    "candid laugh eyes closed":    "candid natural laugh, eyes closed with joy",
+    "serene gaze distance":        "serene, gaze drifting into the distance",
+    "confident direct eye contact": "confident, direct eye contact with the camera",
+    "contemplative looking away":  "contemplative, eyes softly looking slightly off-frame",
+    "warm natural smile":          "warm, genuine natural smile",
+    "relaxed eyes half-closed":    "relaxed expression, eyes softly half-closed",
+    "focused reading or scrolling": "focused, eyes looking downward, absorbed in thought",
+}
+
+_HAIR_STYLES = [
+    "loose beach waves",
+    "messy bun",
+    "straight and down",
+    "high ponytail",
+    "low casual bun",
+    "half-up half-down waves",
+]
+
+_ACCESSORIES = [
+    "Small gold necklace",
+    "Silver hoop earrings",
+    "Dainty gold pendant necklace",
+    "Gold bracelet and small earrings",
+    "None",
+    "Small gold stud earrings",
+]
+
+
+def build_madison_json(concept: dict, calendar_step: dict) -> str:
+    """
+    Assemble le JSON final pour Gemini depuis MADISON_JSON_TEMPLATE + concept.
+
+    Args:
+        concept       : dict produit par concept_generator.generate_concept()
+                        {location, outfit, pose, mood, lighting, generated_at}
+        calendar_step : étape courante depuis calendar.json {format, ...}
+
+    Returns:
+        str : JSON string prêt à être injecté dans PROMPT_JSON_TO_IMAGE
+    """
+    from prompts import MADISON_JSON_TEMPLATE
+
+    outfit_str   = concept["outfit"].lower()
+    lighting_str = concept["lighting"].lower()
+    pose_str     = concept["pose"].lower()
+    mood_str     = concept["mood"].lower()
+    location_str = concept["location"].lower()
+
+    outfit   = _OUTFIT_MAP.get(outfit_str, {
+        "top_garment":        outfit_str,
+        "top_description":    f"{concept['outfit']}, fitted over the bust",
+        "bottom_description": "Matching bottom",
+    })
+    lighting = _LIGHTING_MAP.get(lighting_str, {
+        "type":    concept["lighting"],
+        "quality": "Natural, photorealistic",
+        "shadows": "Natural shadows",
+    })
+    pose     = _POSE_CAMERA_MAP.get(pose_str, {
+        "pose_description": concept["pose"],
+        "camera_type":      "DSLR portrait",
+        "lens_type":        "50mm lens",
+        "camera_angle":     "Eye-level",
+    })
+    expression        = _MOOD_EXPRESSION_MAP.get(mood_str, concept["mood"])
+    background        = _LOCATION_BACKGROUND_MAP.get(location_str, f"{concept['location']}, natural light")
+    aspect_ratio      = "9:16" if calendar_step.get("format") == "story" else "4:5"
+
+    replacements = {
+        "{top_garment}":            outfit["top_garment"],
+        "{top_description}":        outfit["top_description"],
+        "{bottom_description}":     outfit["bottom_description"],
+        "{accessories}":            random.choice(_ACCESSORIES),
+        "{hair_style}":             random.choice(_HAIR_STYLES),
+        "{expression}":             expression,
+        "{pose_description}":       pose["pose_description"],
+        "{location}":               concept["location"],
+        "{background_description}": background,
+        "{lighting_type}":          lighting["type"],
+        "{lighting_quality}":       lighting["quality"],
+        "{shadow_description}":     lighting["shadows"],
+        "{camera_type}":            pose["camera_type"],
+        "{lens_type}":              pose["lens_type"],
+        "{camera_angle}":           pose["camera_angle"],
+        "{aspect_ratio}":           aspect_ratio,
+    }
+
+    template_str = json.dumps(copy.deepcopy(MADISON_JSON_TEMPLATE), ensure_ascii=False)
+    for key, value in replacements.items():
+        template_str = template_str.replace(key, value)
+
+    logger.debug(f"JSON scène assemblé ({aspect_ratio}) — outfit={outfit_str} | lighting={lighting_str}")
+    return template_str
+
+
+def generate_image_from_concept(concept: dict, calendar_step: dict) -> tuple[str, str, str]:
+    """
+    Point d'entrée principal pour workflow_generatif.py.
+    Assemble le JSON, formate le prompt, appelle Gemini, retourne les chemins.
+
+    Args:
+        concept       : dict de concept_generator.generate_concept()
+        calendar_step : étape courante de calendar.json
+
+    Returns:
+        (local_path, public_url, filename)
+    """
+    from prompts import PROMPT_JSON_TO_IMAGE
+
+    logger.info(f"Génération image depuis concept — modèle : {GEMINI_MODEL_IMAGE_PRO2}")
+
+    json_scene    = build_madison_json(concept, calendar_step)
+    final_prompt  = PROMPT_JSON_TO_IMAGE.format(scene_json=json_scene)
+    ref_part      = _load_ref_image_part()
+
+    response = _client.models.generate_content(
+        model=GEMINI_MODEL_IMAGE_PRO2,
+        contents=[final_prompt, ref_part],
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE", "TEXT"],
+        ),
+    )
+
+    filename   = f"generatif_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    local_path = _save_image_from_response(response, filename)
+    public_url = _copy_to_nginx(local_path, filename)
+
+    logger.info(f"Image générée (workflow génératif) : {local_path}")
+    return local_path, public_url, filename
+
+
+# ================================================================
+# Workflow génératif V2 — build JSON + génération image
+# ================================================================
+
+# Lookup tables : mappe les valeurs simples de variables.json
+# vers les champs détaillés attendus par MADISON_JSON_TEMPLATE.
+
+_OUTFIT_MAP: dict[str, dict] = {
+    "white crop top + high waist jeans": {
+        "top_garment":        "white crop top",
+        "top_description":    "White fitted crop top, stretched tight over her large bust",
+        "bottom_description": "High-waist white denim jeans, fitted at the waist",
+    },
+    "black bikini": {
+        "top_garment":        "black bikini top",
+        "top_description":    "Black triangle bikini top, stretched over very large breasts, causing visible cleavage",
+        "bottom_description": "Matching black string bikini bottoms",
+    },
+    "beige linen dress": {
+        "top_garment":        "beige linen dress",
+        "top_description":    "Loose beige linen dress, draped over her curves, slightly fitted at the bust",
+        "bottom_description": "Same beige linen dress flowing below the hips",
+    },
+    "oversized grey hoodie": {
+        "top_garment":        "oversized grey hoodie",
+        "top_description":    "Oversized grey hoodie worn casually, slightly off one shoulder",
+        "bottom_description": "Hoodie covers upper thighs, no visible bottom",
+    },
+    "satin slip dress nude": {
+        "top_garment":        "nude satin slip dress",
+        "top_description":    "Thin nude satin slip dress, clinging to her curves and full bust",
+        "bottom_description": "Same satin slip dress flowing past the hips",
+    },
+    "sport bra + leggings": {
+        "top_garment":        "sports bra",
+        "top_description":    "Black sports bra, stretched over full natural bust, minimal coverage",
+        "bottom_description": "High-waist black leggings, fitted and form-hugging",
+    },
+    "blazer only no shirt": {
+        "top_garment":        "blazer",
+        "top_description":    "Oversized blazer worn directly on skin with no shirt, slightly open in front",
+        "bottom_description": "Blazer barely covers hips, minimal visible bottom",
+    },
+    "floral summer dress": {
+        "top_garment":        "floral summer dress",
+        "top_description":    "Floral print summer dress, fitted at the bust, light flowing fabric",
+        "bottom_description": "Same floral dress flowing loosely past the hips",
+    },
+    "white button-down shirt half open": {
+        "top_garment":        "white button-down shirt",
+        "top_description":    "White button-down shirt, half open, slightly off one shoulder, knotted at waist",
+        "bottom_description": "Shirt drapes over hips, no visible separate bottom",
+    },
+    "long cardigan + cycling shorts": {
+        "top_garment":        "long cardigan",
+        "top_description":    "Long oversized cardigan, open front, cozy texture",
+        "bottom_description": "Black cycling shorts, form-fitting and high-waisted",
+    },
+}
+
+_LIGHTING_MAP: dict[str, dict] = {
+    "golden hour warm backlight": {
+        "type":    "Golden hour sunlight from behind the subject",
+        "quality": "Warm golden-orange, directional backlight",
+        "shadows": "Long soft shadows toward camera, warm rim light glow",
+    },
+    "soft diffused indoor": {
+        "type":    "Soft indoor ambient light",
+        "quality": "Diffused, even, no harsh shadows",
+        "shadows": "Very soft, almost shadowless",
+    },
+    "bright natural window light": {
+        "type":    "Natural daylight from large window",
+        "quality": "Bright, crisp, cool-white directional light",
+        "shadows": "Clean, defined directional shadows from window",
+    },
+    "warm sunset side light": {
+        "type":    "Warm sunset golden light from the side",
+        "quality": "Warm amber-orange, strong directional side light",
+        "shadows": "Deep warm side shadows, dramatic and moody",
+    },
+    "cool morning light": {
+        "type":    "Soft cool morning daylight",
+        "quality": "Soft, cool-blue, diffused morning light",
+        "shadows": "Gentle, minimal, cool-toned shadows",
+    },
+    "candlelight intimate": {
+        "type":    "Warm flickering candlelight",
+        "quality": "Intimate, warm orange-amber glow",
+        "shadows": "Deep moody shadows with warm highlights",
+    },
+    "overcast outdoor soft": {
+        "type":    "Overcast outdoor daylight",
+        "quality": "Flat, even, milky-white diffused light",
+        "shadows": "Near shadowless, very soft and even",
+    },
+    "harsh midday sun editorial": {
+        "type":    "Harsh direct midday sunlight",
+        "quality": "High contrast, bright white, editorial quality",
+        "shadows": "Sharp, deep, hard shadows",
+    },
+}
+
+_LOCATION_BACKGROUND_MAP: dict[str, str] = {
+    "bedroom mirror":              "Bedroom seen through a large full-length mirror, unmade white linen bedding, window with soft natural light, white walls",
+    "beach at sunset":             "Sandy beach at golden hour, warm ocean horizon, gentle waves, pink-orange sky",
+    "cafe terrace paris":          "Parisian café terrace, small round tables, rattan chairs, cobblestone street, soft afternoon light",
+    "poolside luxury":             "Edge of a luxury pool, clear turquoise water, white marble tiles, sun deck chairs in background",
+    "rooftop city view":           "Urban rooftop, open city skyline stretching to the horizon, late afternoon sky",
+    "bathroom vanity":             "Modern bathroom with large vanity mirror, marble countertop, warm vanity strip lighting",
+    "hotel room morning":          "Minimalist hotel room, soft white bed linen, large window with morning light flooding in",
+    "forest path golden hour":     "Forest path lined with tall trees, golden light filtering through leaves, dappled light patterns on the ground",
+    "kitchen counter":             "Modern white kitchen, marble countertop, natural light from a nearby window",
+    "balcony with city skyline":   "Open balcony with metal railing, city skyline visible below, open blue sky above",
+    "linen sofa living room":      "Cozy living room, natural linen sofa, books and plants on shelves, warm ambient lamplight",
+    "outdoor terrace white stone": "Mediterranean-style outdoor terrace, white stone walls, terracotta pots, warm blue-sky backdrop",
+}
+
+_POSE_CAMERA_MAP: dict[str, dict] = {
+    "mirror selfie arm raised": {
+        "pose_description": "Standing facing a full-length mirror, arm raised holding smartphone to take a selfie, body slightly angled",
+        "camera_type":      "Smartphone camera mirror selfie",
+        "lens_type":        "Wide-angle smartphone lens",
+        "camera_angle":     "Eye-level from the mirror reflection",
+    },
+    "over shoulder looking back": {
+        "pose_description": "Walking away from camera, head turned to look back over shoulder with natural ease",
+        "camera_type":      "DSLR candid capture",
+        "lens_type":        "50mm portrait lens",
+        "camera_angle":     "Eye-level from behind, slight three-quarter angle",
+    },
+    "sitting legs crossed candid": {
+        "pose_description": "Sitting casually on a surface, legs loosely crossed, relaxed candid posture",
+        "camera_type":      "DSLR candid portrait",
+        "lens_type":        "35mm lens",
+        "camera_angle":     "Eye-level, candid",
+    },
+    "standing profile arms relaxed": {
+        "pose_description": "Standing in profile view, arms relaxed at sides, neutral confident stance",
+        "camera_type":      "DSLR editorial portrait",
+        "lens_type":        "85mm portrait lens",
+        "camera_angle":     "Profile view, eye-level",
+    },
+    "lying on bed reading": {
+        "pose_description": "Lying on bed on stomach, propped comfortably on elbows, looking at phone or reading",
+        "camera_type":      "DSLR angled shot from above",
+        "lens_type":        "35mm lens",
+        "camera_angle":     "Slightly high angle, looking down",
+    },
+    "walking looking down": {
+        "pose_description": "Walking casually, looking down at phone, candid street-style movement",
+        "camera_type":      "DSLR candid street photography",
+        "lens_type":        "35mm lens",
+        "camera_angle":     "Eye-level, candid from the front",
+    },
+    "leaning against wall": {
+        "pose_description": "Leaning relaxed against a wall, arms loosely at sides, confident casual stance",
+        "camera_type":      "DSLR portrait",
+        "lens_type":        "50mm lens",
+        "camera_angle":     "Eye-level, straight on",
+    },
+    "head tilted soft smile": {
+        "pose_description": "Standing or sitting, head gently tilted to one side, warm natural expression",
+        "camera_type":      "DSLR close portrait",
+        "lens_type":        "85mm portrait lens",
+        "camera_angle":     "Slightly above eye-level",
+    },
+    "sitting on floor hugging knees": {
+        "pose_description": "Sitting on floor, knees pulled up to chest, arms wrapped around knees, intimate pose",
+        "camera_type":      "DSLR intimate portrait",
+        "lens_type":        "50mm lens",
+        "camera_angle":     "Eye-level from slightly above",
+    },
+    "standing in doorway backlit": {
+        "pose_description": "Standing in a doorway, body backlit by light pouring in from behind, slightly silhouetted with details visible",
+        "camera_type":      "DSLR backlit portrait",
+        "lens_type":        "35mm lens",
+        "camera_angle":     "Eye-level, straight-on from the front",
+    },
+}
+
+_MOOD_EXPRESSION_MAP: dict[str, str] = {
+    "playful smile":                "playful smile, bright and expressive eyes",
+    "sultry soft look":             "sultry expression, soft half-smile, relaxed gaze",
+    "candid laugh eyes closed":     "candid natural laugh, eyes closed with joy",
+    "serene gaze distance":         "serene, gaze drifting into the distance",
+    "confident direct eye contact": "confident, direct eye contact with the camera",
+    "contemplative looking away":   "contemplative, eyes softly looking slightly off-frame",
+    "warm natural smile":           "warm, genuine natural smile",
+    "relaxed eyes half-closed":     "relaxed expression, eyes softly half-closed",
+    "focused reading or scrolling": "focused, eyes looking downward, absorbed in thought",
+}
+
+_HAIR_STYLES = [
+    "loose beach waves",
+    "messy bun",
+    "straight and down",
+    "high ponytail",
+    "low casual bun",
+    "half-up half-down waves",
+]
+
+_ACCESSORIES = [
+    "Small gold necklace",
+    "Silver hoop earrings",
+    "Dainty gold pendant necklace",
+    "Gold bracelet and small earrings",
+    "None",
+    "Small gold stud earrings",
+]
+
+
+def build_madison_json(concept: dict, calendar_step: dict) -> str:
+    """
+    Assemble le JSON final pour Gemini depuis MADISON_JSON_TEMPLATE + concept.
+
+    Mappe les valeurs simples de variables.json vers les champs détaillés
+    du template. Fallback sur la valeur brute si la clé est absente du map.
+
+    Args:
+        concept       : dict produit par concept_generator.generate_concept()
+                        {location, outfit, pose, mood, lighting, generated_at}
+        calendar_step : étape courante depuis calendar.json {format, ...}
+
+    Returns:
+        str : JSON string prêt à être injecté dans PROMPT_JSON_TO_IMAGE
+    """
+    from prompts import MADISON_JSON_TEMPLATE
+
+    outfit_str   = concept["outfit"].lower()
+    lighting_str = concept["lighting"].lower()
+    pose_str     = concept["pose"].lower()
+    mood_str     = concept["mood"].lower()
+    location_str = concept["location"].lower()
+
+    outfit   = _OUTFIT_MAP.get(outfit_str, {
+        "top_garment":        outfit_str,
+        "top_description":    f"{concept['outfit']}, fitted over the bust",
+        "bottom_description": "Matching bottom",
+    })
+    lighting = _LIGHTING_MAP.get(lighting_str, {
+        "type":    concept["lighting"],
+        "quality": "Natural, photorealistic",
+        "shadows": "Natural shadows",
+    })
+    pose     = _POSE_CAMERA_MAP.get(pose_str, {
+        "pose_description": concept["pose"],
+        "camera_type":      "DSLR portrait",
+        "lens_type":        "50mm lens",
+        "camera_angle":     "Eye-level",
+    })
+    expression   = _MOOD_EXPRESSION_MAP.get(mood_str, concept["mood"])
+    background   = _LOCATION_BACKGROUND_MAP.get(location_str, f"{concept['location']}, natural light")
+    aspect_ratio = "9:16" if calendar_step.get("format") == "story" else "4:5"
+
+    replacements = {
+        "{top_garment}":            outfit["top_garment"],
+        "{top_description}":        outfit["top_description"],
+        "{bottom_description}":     outfit["bottom_description"],
+        "{accessories}":            random.choice(_ACCESSORIES),
+        "{hair_style}":             random.choice(_HAIR_STYLES),
+        "{expression}":             expression,
+        "{pose_description}":       pose["pose_description"],
+        "{location}":               concept["location"],
+        "{background_description}": background,
+        "{lighting_type}":          lighting["type"],
+        "{lighting_quality}":       lighting["quality"],
+        "{shadow_description}":     lighting["shadows"],
+        "{camera_type}":            pose["camera_type"],
+        "{lens_type}":              pose["lens_type"],
+        "{camera_angle}":           pose["camera_angle"],
+        "{aspect_ratio}":           aspect_ratio,
+    }
+
+    template_str = json.dumps(copy.deepcopy(MADISON_JSON_TEMPLATE), ensure_ascii=False)
+    for key, value in replacements.items():
+        template_str = template_str.replace(key, value)
+
+    logger.debug(f"JSON scène assemblé ({aspect_ratio}) — outfit={outfit_str} | lighting={lighting_str}")
+    return template_str
+
+
+def generate_image_from_concept(concept: dict, calendar_step: dict) -> tuple[str, str, str]:
+    """
+    Point d'entrée principal pour workflow_generatif.py.
+    Assemble le JSON, formate le prompt, appelle Gemini, retourne les chemins.
+
+    Args:
+        concept       : dict de concept_generator.generate_concept()
+        calendar_step : étape courante de calendar.json
+
+    Returns:
+        (local_path, public_url, filename)
+    """
+    from prompts import PROMPT_JSON_TO_IMAGE
+
+    logger.info(f"Génération image depuis concept — modèle : {GEMINI_MODEL_IMAGE_PRO2}")
+
+    json_scene   = build_madison_json(concept, calendar_step)
+    final_prompt = PROMPT_JSON_TO_IMAGE.format(scene_json=json_scene)
+    ref_part     = _load_ref_image_part()
+
+    response = _client.models.generate_content(
+        model=GEMINI_MODEL_IMAGE_PRO2,
+        contents=[final_prompt, ref_part],
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE", "TEXT"],
+        ),
+    )
+
+    filename   = f"generatif_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    local_path = _save_image_from_response(response, filename)
+    public_url = _copy_to_nginx(local_path, filename)
+
+    logger.info(f"Image générée (workflow génératif) : {local_path}")
+    return local_path, public_url, filename
 
 
 # ================================================================

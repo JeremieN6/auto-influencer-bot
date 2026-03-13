@@ -75,6 +75,74 @@ Scene JSON:
 """
 
 # ================================================================
+# PROMPT 3b — Template JSON Madison (workflow_generatif V2)
+# Usage : image_generator.build_madison_json() assemble ce template
+#         avec les variables tirées depuis variables.json.
+# Les {placeholders} sont remplacés dynamiquement par build_madison_json().
+# ================================================================
+MADISON_JSON_TEMPLATE = {
+    "subject": {
+        "description": "A young blonde woman named Madison, californian aesthetic, mid-20s.",
+        "body": {
+            "physique": "Voluptuous hourglass figure with significantly enlarged breasts that fill the {top_garment}. Narrow defined waist leading to wider hips and prominent glutes. Muscle tone visible in core and legs.",
+            "anatomy": {
+                "shoulders": "Defined, proportional.",
+                "waist": "Narrow, defined waist.",
+                "hips": "Wide hips with prominent glutes.",
+                "breasts": "Extremely large, very full breasts causing cleavage and stretching the {top_garment}.",
+                "waist_to_hip_ratio": "Pronounced hourglass.",
+            },
+            "skin": {
+                "tone": "Warm light beige, natural sun-kissed California glow.",
+                "texture": "Visible pores, natural skin texture, not airbrushed, raw photo.",
+                "details": "No tattoos.",
+            },
+        },
+        "face": {
+            "hair": "Dirty blonde, {hair_style}.",
+            "eyes": "Light blue-grey.",
+            "features": "Soft facial features, natural makeup, {expression}.",
+            "skin": "Clear, freckle-free, warm beige tone.",
+        },
+        "wardrobe": {
+            "top": "{top_description}",
+            "bottom": "{bottom_description}",
+            "accessories": "{accessories}",
+        },
+        "pose": "{pose_description}",
+    },
+    "scene": {
+        "location": "{location}",
+        "background": "{background_description}",
+        "lighting": {
+            "type": "{lighting_type}",
+            "quality": "{lighting_quality}",
+            "shadows": "{shadow_description}",
+        },
+    },
+    "camera": {
+        "type": "{camera_type}",
+        "lens": "{lens_type}",
+        "angle": "{camera_angle}",
+        "focus": "Sharp focus on the subject.",
+        "composition": "{aspect_ratio} aspect ratio.",
+        "style": "Realistic, candid photo style, raw photography, no filters.",
+    },
+    "negative_constraints": [
+        "no tattoos",
+        "no extra limbs",
+        "no distorted fingers",
+        "no fused skin textures",
+        "no beautify smoothing",
+        "no airbrushed artificial skin",
+        "no watermarks",
+        "no text overlays",
+        "no CGI look",
+        "no plastic skin",
+    ],
+}
+
+# ================================================================
 # PROMPT 4 — Détection personnage (workflow Pinterest V1)
 # Usage : filtre les images Pinterest sans personnage humain visible.
 # ================================================================
