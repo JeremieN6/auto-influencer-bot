@@ -86,8 +86,8 @@ GEMINI_MODEL_INPAINTING      = "gemini-2.0-flash-preview-image-generation"     #
 # L'image générée est copiée ici pour être accessible par l'API Meta.
 # ⚠️  Adapter ces deux valeurs lors du déploiement sur VPS.
 # ----------------------------------------------------------------
-NGINX_OUTPUT_DIR = "/var/www/influencer-bot/outputs"   # Chemin servi par nginx
-NGINX_BASE_URL   = "https://ton-domaine.com/outputs"   # URL publique HTTPS correspondante
+NGINX_OUTPUT_DIR = os.getenv("NGINX_OUTPUT_DIR", "/var/www/influencer-bot/outputs")
+NGINX_BASE_URL   = os.getenv("NGINX_BASE_URL",   "https://ton-domaine.com/outputs")
 
 # ================================================================
 # PATHS — ne pas modifier sauf restructuration intentionnelle
