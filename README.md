@@ -13,11 +13,13 @@ Pipeline complet : scraping Pinterest → génération image (Gemini) → captio
 main.py                    ← Orchestrateur (cron)
 ├── concept_generator.py   ← Tirage aléatoire + anti-répétition
 ├── workflows/
-│   ├── workflow_pinterest.py   ← V1 — source Pinterest
-│   ├── workflow_generatif.py   ← V2 scaffold (non implémenté)
-│   └── workflow_backup.py      ← Manuel (dormant)
+│   ├── workflow_pinterest.py             ← V1 — Pinterest → JSON → image (actif, défaut)
+│   ├── workflow_pinterest_inpainting.py  ← Inpainting — Pinterest → rembg → Gemini inpainting
+│   ├── workflow_generatif.py             ← V2 scaffold (non implémenté)
+│   └── workflow_backup.py                ← Manuel (dormant)
 ├── pinterest_scraper.py   ← Playwright
-├── image_generator.py     ← Gemini API
+├── image_generator.py     ← Gemini API (workflow JSON)
+├── inpainting.py          ← Gemini inpainting natif (workflow inpainting)
 ├── caption_generator.py   ← Claude API
 ├── instagram_publisher.py ← Meta Graph API
 └── telegram_bot.py        ← Bot Telegram (systemd)
@@ -103,22 +105,33 @@ INSTAGRAM_ACCOUNT_ID=17841400...
 
 ---
 
-### 5. Ajouter l'image de référence de l'influenceuse
+### 5. Ajouter les images de référence de l'influenceuse
 
-L'image de référence est indispensable pour la génération (cohérence du personnage).
+Deux fichiers sont nécessaires :
 
-**Convention de nommage** : `data/ref_{prenom_lowercase}.jpg`
+| Fichier | Rôle | Workflow concerné |
+|---------|------|-----------------|
+| `data/ref_{prenom}_face.jpg` | Référence visage (3 angles) | Tous les workflows |
+| `data/ref_{prenom}_body.jpg` | Référence corps (3 panels) | Workflow inpainting |
 
 Pour Madison (configuration par défaut) :
 ```
-data/ref_madison.jpg
+data/ref_madison_face.jpg   ← référence visage
+data/ref_madison_body.jpg   ← référence corps (générée par scripts/generate_body_ref.py)
 ```
 
-Pour créer cette image, utiliser le prompt dans `prompts.py` → `PROMPT_REF_SHEET`
+**Générer la référence visage** — utiliser le prompt dans `prompts.py` → `PROMPT_REF_SHEET`
 ou le fichier `PROMPTS/CHARACTER_CONSISTENCY_FACE_REFERENCE_IMAGE.md`.
 
-> Si ce fichier est absent, le script affichera un message d'erreur explicite
-> avec les instructions pour le créer. Il ne plantera pas silencieusement.
+**Générer la référence corps** — script dédié via Replicate (FLUX.1-pro) :
+```bash
+# Ajouter REPLICATE_API_KEY dans .env.local
+python scripts/generate_body_ref.py
+```
+Le script génère plusieurs variations dans `data/`. Choisir la meilleure et la renommer en `ref_madison_body.jpg`.
+
+> Si les fichiers sont absents lors du lancement du workflow inpainting,
+> le pipeline affichera un message d'erreur explicite et s'arrêtera proprement.
 
 ---
 
@@ -230,11 +243,14 @@ crontab -l
 ## Test rapide
 
 ```bash
-# Test pipeline complet sans Telegram ni historique
+# Test pipeline JSON (défaut)
 python main.py --dry-run
 
-# Test pipeline Pinterest normal
+# Pipeline Pinterest → JSON → image (workflow défaut)
 python main.py
+
+# Pipeline Pinterest → inpainting direct Gemini
+python main.py --workflow pinterest_inpainting
 
 # Démarrer le bot Telegram manuellement (développement)
 python telegram_bot.py
@@ -246,22 +262,29 @@ python telegram_bot.py
 
 Pour utiliser ce système avec une autre influenceuse :
 
-1. **Générer l'image de référence** 3 angles avec `PROMPT_REF_SHEET` (voir `prompts.py`)
-   → Sauvegarder dans `data/ref_{prenom}.jpg`
+1. **Générer la référence visage** avec `PROMPT_REF_SHEET` (voir `prompts.py`)
+   → Sauvegarder dans `data/ref_{prenom}_face.jpg`
 
-2. **Modifier `config.py`** — uniquement le bloc INFLUENCER CONFIG :
+2. **Générer la référence corps** via le script dédié :
+   ```bash
+   # Adapter le prompt dans scripts/generate_body_ref.py selon le personnage
+   python scripts/generate_body_ref.py
+   ```
+   → Sauvegarder la meilleure variation dans `data/ref_{prenom}_body.jpg`
+
+3. **Modifier `config.py`** — uniquement le bloc INFLUENCER CONFIG :
    ```python
    INFLUENCER_NAME  = "Sofia"
    INFLUENCER_STYLE = "brunette parisienne, chic minimaliste, palette bleu/blanc/gris"
-   # INFLUENCER_REF_IMAGE_PATH est dérivé automatiquement → data/ref_sofia.jpg
+   # INFLUENCER_REF_FACE_PATH et INFLUENCER_REF_BODY_PATH sont dérivés automatiquement
    PINTEREST_KEYWORDS = ["parisian style", "french elegance", ...]
    ```
 
-3. **Adapter `data/variables.json`** selon la niche (locations, outfits, poses...)
+4. **Adapter `data/variables.json`** selon la niche (locations, outfits, poses...)
 
-4. **Adapter les hashtags** dans `prompts.py` → `HASHTAG_BLOCK_*`
+5. **Adapter les hashtags** dans `prompts.py` → `HASHTAG_BLOCK_*`
 
-5. **Adapter `NGINX_BASE_URL`** si nouveau domaine
+6. **Adapter `NGINX_BASE_URL`** si nouveau domaine
 
 C'est tout.
 
@@ -289,7 +312,8 @@ C'est tout.
 | `data/calendar.json` | Cycle éditorial (format, hashtags) | ✅ Oui |
 | `data/history.json` | Historique des posts (anti-répétition) | ❌ Non (runtime) |
 | `data/pending_state.json` | État partagé entre main.py et bot | ❌ Non (runtime) |
-| `data/ref_*.jpg` | Image référence influenceuse | ❌ Non (propriétaire) |
+| `data/ref_*_face.jpg` | Référence visage influenceuse | ❌ Non (propriétaire) |
+| `data/ref_*_body.jpg` | Référence corps influenceuse | ❌ Non (propriétaire) |
 
 ---
 
@@ -312,8 +336,10 @@ sudo journalctl -u influencer-telegram -f --no-pager
 
 | Feature | Version | Statut |
 |---------|---------|--------|
-| Workflow Pinterest | V1 | ✅ Implémenté |
+| Workflow Pinterest (JSON) | V1 | ✅ Implémenté |
+| Workflow inpainting Gemini natif | V1 | ✅ Implémenté |
 | Bot Telegram V1 (validate, modify...) | V1 | ✅ Implémenté |
+| Script génération référence corps (Replicate FLUX.1-pro) | V1 | ✅ Implémenté |
 | Workflow Génératif (Claude → scène) | V2 | 🔜 À implémenter |
 | Commande /run (paramètres manuels) | V2 | 🔜 À implémenter |
 | Publication autonome sans /validate | V2 | 🔜 À implémenter (lorsque le process + rendu est validé) |
