@@ -18,6 +18,9 @@ playwright>=1.40.0
 # Image manipulation
 Pillow>=10.0
 
+# Segmentation automatique de personnage — workflow inpainting (local, sans API)
+rembg>=2.0.0
+
 # HTTP requests (Meta Graph API)
 requests>=2.31
 

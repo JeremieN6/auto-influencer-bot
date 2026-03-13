@@ -24,6 +24,7 @@ USAGE :
 
 import argparse
 import asyncio
+import os
 import sys
 
 from caption_generator import generate_caption
@@ -54,6 +55,19 @@ def run_pipeline(
     """
     log_section("main", f"PIPELINE DÉMARRÉ — workflow={workflow} | dry_run={dry_run}")
 
+    # ── Vérification références influenceuse ───────────────────────
+    if workflow == "pinterest_inpainting":
+        from config import INFLUENCER_REF_BODY_PATH, INFLUENCER_REF_FACE_PATH
+        for path, label in [
+            (INFLUENCER_REF_FACE_PATH, "référence visage"),
+            (INFLUENCER_REF_BODY_PATH, "référence corps"),
+        ]:
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"❌ Fichier manquant : {path} ({label})\n"
+                    f"   Dépose le fichier dans /data avant de lancer le pipeline inpainting."
+                )
+
     # ── Étape 1 : Concept créatif ────────────────────────────────
     log("info", "main", "=== Étape 1/4 : Génération concept ===")
     concept = generate_concept(
@@ -75,10 +89,12 @@ def run_pipeline(
 
     if workflow == "pinterest":
         from workflows.workflow_pinterest import run as run_workflow
+    elif workflow == "pinterest_inpainting":
+        from workflows.workflow_pinterest_inpainting import run as run_workflow  # type: ignore[assignment]
     elif workflow == "generatif":
         from workflows.workflow_generatif import run as run_workflow  # type: ignore[assignment]
     else:
-        raise ValueError(f"Workflow inconnu : '{workflow}'. Valeurs acceptées : 'pinterest', 'generatif'")
+        raise ValueError(f"Workflow inconnu : '{workflow}'. Valeurs acceptées : 'pinterest', 'pinterest_inpainting', 'generatif'")
 
     local_path, public_url, filename = run_workflow(concept)
     log("info", "main", f"Image générée : {local_path}")
@@ -132,7 +148,7 @@ Exemples :
     )
     parser.add_argument(
         "--workflow",
-        choices=["pinterest", "generatif"],
+        choices=["pinterest", "pinterest_inpainting", "generatif"],
         default="pinterest",
         help="Workflow à utiliser (défaut : pinterest)",
     )

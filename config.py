@@ -31,10 +31,12 @@ INFLUENCER_STYLE = (
 )
 
 # Dérivé automatiquement depuis le nom — ne pas modifier manuellement.
-# Convention : data/ref_{prenom_lowercase}.[jpg|jpeg|png|webp|avif]
-# Pour une nouvelle influenceuse "Sofia" → placer data/ref_sofia.jpg (ou .png, .webp...)
-# Le script détecte automatiquement l'extension disponible.
-INFLUENCER_REF_IMAGE_PATH = f"data/ref_{INFLUENCER_NAME.lower()}"
+# Pour une nouvelle influenceuse "Sofia" → déposer :
+#   data/ref_sofia_face.jpg  (référence visage 3 angles)
+#   data/ref_sofia_body.jpg  (référence corps 3 panels)
+INFLUENCER_REF_IMAGE_PATH = f"data/ref_{INFLUENCER_NAME.lower()}"   # legacy — utilisé par image_generator.py (workflow JSON)
+INFLUENCER_REF_FACE_PATH  = f"data/ref_{INFLUENCER_NAME.lower()}_face.jpg"
+INFLUENCER_REF_BODY_PATH  = f"data/ref_{INFLUENCER_NAME.lower()}_body.jpg"
 
 # Mots-clés Pinterest alignés sur la niche de l'influenceuse.
 # Utilisés pour construire la requête de recherche Pinterest (workflow V1).
@@ -73,10 +75,11 @@ LOG_PATH              = "logs/run.log"
 # Si un modèle n'est pas dispo, utiliser le fallback :
 #   FALLBACK_IMAGE_MODEL = "gemini-1.5-pro"
 # ----------------------------------------------------------------
-GEMINI_MODEL_IMAGE      = "gemini-3-pro-image-preview"         # Pro — génération image
-GEMINI_MODEL_IMAGE_PRO2 = "gemini-3.1-flash-image-preview"     # Pro 2 — préféré si dispo
-GEMINI_MODEL_VISION     = "gemini-3-pro-image-preview"         # Vision — détection personnage
-GEMINI_MODEL_FALLBACK   = "gemini-1.5-flash"                   # Fallback si preview indispo
+GEMINI_MODEL_IMAGE           = "gemini-3-pro-image-preview"                    # Pro — génération image
+GEMINI_MODEL_IMAGE_PRO2      = "gemini-3.1-flash-image-preview"                # Pro 2 — préféré si dispo
+GEMINI_MODEL_VISION          = "gemini-3-pro-image-preview"                    # Vision — détection personnage
+GEMINI_MODEL_FALLBACK        = "gemini-1.5-flash"                              # Fallback si preview indispo
+GEMINI_MODEL_INPAINTING      = "gemini-2.0-flash-preview-image-generation"     # Inpainting natif — workflow inpainting
 
 # ----------------------------------------------------------------
 # Hébergement temporaire nginx (VPS)
