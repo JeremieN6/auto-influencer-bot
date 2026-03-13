@@ -89,14 +89,17 @@ def run_pipeline(
 
     if workflow == "pinterest":
         from workflows.workflow_pinterest import run as run_workflow
+        local_path, public_url, filename, source_url, search_query = run_workflow(concept)
     elif workflow == "pinterest_inpainting":
         from workflows.workflow_pinterest_inpainting import run as run_workflow  # type: ignore[assignment]
+        local_path, public_url, filename = run_workflow(concept)
+        source_url, search_query = None, None
     elif workflow == "generatif":
         from workflows.workflow_generatif import run as run_workflow  # type: ignore[assignment]
+        local_path, public_url, filename = run_workflow(concept)
+        source_url, search_query = None, None
     else:
         raise ValueError(f"Workflow inconnu : '{workflow}'. Valeurs acceptées : 'pinterest', 'pinterest_inpainting', 'generatif'")
-
-    local_path, public_url, filename = run_workflow(concept)
     log("info", "main", f"Image générée : {local_path}")
 
     # ── Étape 4 : Caption ────────────────────────────────────────
@@ -118,7 +121,19 @@ def run_pipeline(
 
     if dry_run:
         log("info", "main", "[DRY RUN] — Pas d'envoi Telegram, pas de sauvegarde historique")
-        log("info", "main", f"[DRY RUN] Image : {local_path}")
+        sep = "═" * 60
+        pinterest_info = (
+            f"  Requête Pinterest : {search_query}\n"
+            f"  Image source      : {source_url}\n"
+        ) if source_url else ""
+        log("info", "main",
+            f"\n{sep}\n"
+            f"  DRY RUN — RÉSUMÉ\n"
+            f"{sep}\n"
+            f"{pinterest_info}"
+            f"  Image générée     : {local_path}\n"
+            f"{sep}"
+        )
         log("info", "main", f"[DRY RUN] Caption :\n{caption}")
     else:
         save_pending_state(state)

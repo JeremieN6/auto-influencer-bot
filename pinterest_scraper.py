@@ -216,9 +216,12 @@ def _cleanup_temp_image(path: str | None) -> None:
 # Fonction principale (async interne)
 # ================================================================
 
-async def _scrape_async(concept: dict, keywords: list[str]) -> str:
+async def _scrape_async(concept: dict, keywords: list[str]) -> tuple[str, str, str]:
     """
-    Scrape Pinterest, sélectionne une image avec personnage, retourne son chemin local.
+    Scrape Pinterest, sélectionne une image avec personnage.
+
+    Returns:
+        (local_path, source_url, search_query)
 
     Stratégie de retry :
       1. Requête normale
@@ -281,7 +284,7 @@ async def _scrape_async(concept: dict, keywords: list[str]) -> str:
                     if _detect_person_in_image(temp_path):
                         logger.info(f"Personnage détecté ! Image retenue : {temp_path}")
                         await browser.close()
-                        return temp_path
+                        return temp_path, img_url, query
 
                     logger.warning(f"Aucun personnage — rejet de l'image {idx + 1}")
                     _cleanup_temp_image(temp_path)
@@ -312,16 +315,19 @@ async def _scrape_async(concept: dict, keywords: list[str]) -> str:
 # Point d'entrée public (synchrone)
 # ================================================================
 
-def scrape_pinterest_image(concept: dict, keywords: list[str] | None = None) -> str:
+def scrape_pinterest_image(concept: dict, keywords: list[str] | None = None) -> tuple[str, str, str]:
     """
-    Orchestre le scraping Pinterest et retourne le chemin local de l'image sélectionnée.
+    Orchestre le scraping Pinterest.
 
     Args:
         concept   : dict généré par concept_generator.generate_concept()
         keywords  : liste de mots-clés PINTEREST_KEYWORDS (depuis config.py)
 
     Returns:
-        Chemin absolu du fichier image local (dans outputs/)
+        (local_path, source_url, search_query)
+        - local_path   : chemin local de l'image retenue dans outputs/
+        - source_url   : URL Pinterest originale de l'image (i.pinimg.com)
+        - search_query : requête exacte tapée sur Pinterest
 
     Raises:
         RuntimeError : si aucune image valide n'est trouvée après toutes les stratégies
@@ -337,6 +343,6 @@ def scrape_pinterest_image(concept: dict, keywords: list[str] | None = None) -> 
     kw_shuffled = kw.copy()
     random.shuffle(kw_shuffled)
 
-    result = asyncio.run(_scrape_async(concept, kw_shuffled))
-    logger.info(f"=== Pinterest scraper terminé → {result} ===")
-    return result
+    local_path, source_url, search_query = asyncio.run(_scrape_async(concept, kw_shuffled))
+    logger.info(f"=== Pinterest scraper terminé → {local_path} ===")
+    return local_path, source_url, search_query

@@ -68,8 +68,18 @@ def run(concept: dict) -> tuple[str, str, str]:
     from pinterest_scraper import scrape_pinterest_image
     from config import PINTEREST_KEYWORDS
 
-    inspiration_path = scrape_pinterest_image(concept, PINTEREST_KEYWORDS)
+    inspiration_path, source_url, search_query = scrape_pinterest_image(concept, PINTEREST_KEYWORDS)
     logger.info(f"Image d'inspiration : {inspiration_path}")
+
+    # ── Affichage récap recherche Pinterest ─────────────────────
+    sep = "─" * 60
+    logger.info(
+        f"\n{sep}\n"
+        f"  RECHERCHE PINTEREST\n"
+        f"  Requête  : {search_query}\n"
+        f"  URL base : {source_url}\n"
+        f"{sep}"
+    )
 
     # ── Étape 2/3 : Image → JSON de scène ───────────────────────
     log_step(__name__, 2, TOTAL_STEPS, "Analyse image → JSON de scène (Gemini Vision)")
@@ -92,7 +102,7 @@ def run(concept: dict) -> tuple[str, str, str]:
     filename = os.path.basename(local_path)
     logger.info(f"=== Workflow Pinterest terminé : {local_path} ===")
 
-    return local_path, public_url, filename
+    return local_path, public_url, filename, source_url, search_query
 
 
 # ================================================================
