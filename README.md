@@ -277,10 +277,12 @@ Pour utiliser ce système avec une autre influenceuse :
    INFLUENCER_NAME  = "Sofia"
    INFLUENCER_STYLE = "brunette parisienne, chic minimaliste, palette bleu/blanc/gris"
    # INFLUENCER_REF_FACE_PATH et INFLUENCER_REF_BODY_PATH sont dérivés automatiquement
-   PINTEREST_KEYWORDS = ["parisian style", "french elegance", ...]
    ```
 
-4. **Adapter `data/variables.json`** selon la niche (locations, outfits, poses...)
+4. **Adapter `data/variables.json`** selon la niche :
+   - `locations`, `outfits`, `poses`, `moods`, `lighting` — valeurs descriptives pour Gemini
+   - `pinterest_tags` — map `location → tag court Pinterest` (ex: `"bedroom mirror": "mirror selfie girl"`)
+   - `pinterest_person_keywords` — *optionnel* : surcharger `_PERSON_KEYWORDS` dans le code si la niche est différente (fitness, fashion, etc.)
 
 5. **Adapter les hashtags** dans `prompts.py` → `HASHTAG_BLOCK_*`
 
@@ -308,7 +310,7 @@ C'est tout.
 
 | Fichier | Rôle | Commité |
 |---------|------|---------|
-| `data/variables.json` | BDD créative (locations, outfits...) | ✅ Oui |
+| `data/variables.json` | BDD créative (locations, outfits, pinterest_tags...) | ✅ Oui |
 | `data/calendar.json` | Cycle éditorial (format, hashtags) | ✅ Oui |
 | `data/history.json` | Historique des posts (anti-répétition) | ❌ Non (runtime) |
 | `data/pending_state.json` | État partagé entre main.py et bot | ❌ Non (runtime) |

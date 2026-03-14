@@ -48,6 +48,34 @@ DELAY_MIN             = 2.0         # Délai min entre actions (secondes)
 DELAY_MAX             = 5.0         # Délai max entre actions (secondes)
 DELAY_ON_429          = (30, 60)    # Pause sur HTTP 429 (secondes)
 
+# Keywords garantissant un personnage dans les résultats Pinterest.
+# Remplacent le rôle de "insta" comme filtre implicite de contenu créateur.
+# Source : analyse clusters visuels Pinterest — "Instagram Baddie / Pretty Girl / Selfie"
+_PERSON_KEYWORDS = [
+    # Cluster principal — instagram model / selfie aesthetic
+    "pretty girl aesthetic",
+    "pretty girl selfie",
+    "instagram model",
+    "instagram baddie",
+    "baddie aesthetic girl",
+    "model aesthetic girl",
+    "cute girl aesthetic",
+    "hot girl aesthetic",
+    # Cluster mirror selfie / lifestyle
+    "mirror selfie girl",
+    "iphone mirror selfie",
+    "aesthetic mirror selfie",
+    "casual selfie aesthetic",
+    "lifestyle girl aesthetic",
+    # Cluster général
+    "girl aesthetic",
+    # Ajouts — clusters identifiés via analyse visuelle Pinterest
+    "beautiful girl aesthetic",
+    "hot girl selfie",
+    "model girl selfie",
+    "instagram baddie aesthetic",
+]
+
 
 # ================================================================
 # Helpers
@@ -80,14 +108,34 @@ def _is_valid_pinterest_image(url: str) -> bool:
     )
 
 
-def _build_query(concept: dict, keywords: list[str], boost: str = "") -> str:
-    """Construit la requête Pinterest depuis le concept et les mots-clés."""
-    parts = [concept.get("location", ""), concept.get("lighting", "")]
-    parts += random.sample(keywords, min(2, len(keywords)))
-    if boost:
-        parts.append(boost)
-    parts.append("aesthetic")
-    query = " ".join(p for p in parts if p)
+def _build_query(concept: dict, boost_person_kw: str | None = None) -> str:
+    """
+    Construit une requête Pinterest courte (2-3 mots) depuis le concept.
+
+    Structure : [pinterest_tag location] + [keyword personnage]
+
+    Args:
+        concept          : dict du concept courant (contient "location")
+        boost_person_kw  : forcer un keyword personnage précis (pour fallback stratégie 2).
+                           Si None, pioche aléatoirement dans _PERSON_KEYWORDS.
+
+    Returns:
+        str : requête prête à encoder dans l'URL Pinterest
+    """
+    import json
+    from pathlib import Path
+
+    variables_path = Path(__file__).parent / "data" / "variables.json"
+    with open(variables_path, encoding="utf-8") as f:
+        variables = json.load(f)
+    pinterest_tags = variables.get("pinterest_tags", {})
+
+    location_str = concept.get("location", "").lower()
+    location_tag = pinterest_tags.get(location_str, location_str.split()[0] if location_str else "")
+
+    person_kw = boost_person_kw or random.choice(_PERSON_KEYWORDS)
+
+    query = f"{location_tag} {person_kw}".strip()
     logger.info(f"Requête Pinterest : '{query}'")
     return query
 
@@ -216,7 +264,7 @@ def _cleanup_temp_image(path: str | None) -> None:
 # Fonction principale (async interne)
 # ================================================================
 
-async def _scrape_async(concept: dict, keywords: list[str]) -> tuple[str, str, str]:
+async def _scrape_async(concept: dict) -> tuple[str, str, str]:
     """
     Scrape Pinterest, sélectionne une image avec personnage.
 
@@ -224,14 +272,26 @@ async def _scrape_async(concept: dict, keywords: list[str]) -> tuple[str, str, s
         (local_path, source_url, search_query)
 
     Stratégie de retry :
-      1. Requête normale
-      2. Requête + "insta" si liste épuisée
-      3. Shuffle complet des keywords si toujours rien
+      1. Requête standard (location tag + person keyword aléatoire)
+      2. Fallback — person keyword différent
+      3. Fallback ultime — person keyword seul sans contexte location
     """
     strategies = [
-        {"boost": "",      "label": "requête standard"},
-        {"boost": "insta", "label": "boost 'insta'"},
-        {"boost": "photo person",  "label": "boost 'photo person'"},
+        {
+            "label":          "requête standard (location + person keyword)",
+            "person_kw":      None,
+            "force_location": None,
+        },
+        {
+            "label":          "fallback — person keyword différent",
+            "person_kw":      random.choice(_PERSON_KEYWORDS),
+            "force_location": None,
+        },
+        {
+            "label":          "fallback ultime — person keyword seul sans contexte location",
+            "person_kw":      "pretty girl aesthetic",
+            "force_location": "",
+        },
     ]
 
     async with async_playwright() as pw:
@@ -254,7 +314,11 @@ async def _scrape_async(concept: dict, keywords: list[str]) -> tuple[str, str, s
                 # Gérer les popups cookie / login potentiels
                 page.on("dialog", lambda d: asyncio.create_task(d.dismiss()))
 
-                query    = _build_query(concept, keywords, boost=strategy["boost"])
+                concept_for_query = concept.copy()
+                if strategy.get("force_location") is not None:
+                    concept_for_query["location"] = strategy["force_location"]
+
+                query    = _build_query(concept_for_query, boost_person_kw=strategy["person_kw"])
                 img_urls = await _collect_image_urls(page, query)
 
                 if not img_urls:
@@ -321,7 +385,8 @@ def scrape_pinterest_image(concept: dict, keywords: list[str] | None = None) -> 
 
     Args:
         concept   : dict généré par concept_generator.generate_concept()
-        keywords  : liste de mots-clés PINTEREST_KEYWORDS (depuis config.py)
+        keywords  : ignoré — conservé pour compatibilité descendante.
+                    La logique de requête est entièrement gérée par _build_query().
 
     Returns:
         (local_path, source_url, search_query)
@@ -332,17 +397,9 @@ def scrape_pinterest_image(concept: dict, keywords: list[str] | None = None) -> 
     Raises:
         RuntimeError : si aucune image valide n'est trouvée après toutes les stratégies
     """
-    from config import PINTEREST_KEYWORDS as DEFAULT_KEYWORDS
-
-    kw = keywords or DEFAULT_KEYWORDS
     logger.info("=== Pinterest scraper démarré ===")
     logger.info(f"Concept : {concept}")
-    logger.info(f"Keywords : {kw}")
 
-    # Shuffle les keywords pour varier les requêtes à chaque run
-    kw_shuffled = kw.copy()
-    random.shuffle(kw_shuffled)
-
-    local_path, source_url, search_query = asyncio.run(_scrape_async(concept, kw_shuffled))
+    local_path, source_url, search_query = asyncio.run(_scrape_async(concept))
     logger.info(f"=== Pinterest scraper terminé → {local_path} ===")
     return local_path, source_url, search_query
