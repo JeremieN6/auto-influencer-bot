@@ -323,13 +323,13 @@ def inject_madison_body(scene_json: dict) -> dict:
     madison_body = {
         "physique": (
             f"Voluptuous hourglass figure with significantly enlarged breasts that fill the {top_garment}. "
-            "Narrow defined waist leading to wider hips and prominent glutes. "
+            "Narrow defined waist leading to wider hips, full and rounded high-set glutes with extreme waist-to-hip ratio. "
             "Muscle tone visible in core and legs."
         ),
         "anatomy": {
             "shoulders": "Defined, proportional.",
             "waist": "Narrow, defined waist.",
-            "hips": "Wide hips with prominent glutes.",
+            "hips": "Wide hips with full, high and rounded glutes. Prominent gluteal muscles, extreme waist-to-hip ratio, shapely posterior chain. Not muscular — curvaceous and natural.",
             "breasts": (
                 f"Extremely large, very full breasts causing cleavage and stretching the {top_garment}."
             ),
