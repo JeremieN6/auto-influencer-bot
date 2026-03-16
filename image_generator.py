@@ -116,7 +116,32 @@ def _save_image_from_response(response, filename: str) -> str:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
     local_path = os.path.join(OUTPUTS_DIR, filename)
 
-    for part in response.candidates[0].content.parts:
+    # Défense : candidates absents ou vides
+    if not response.candidates:
+        raise ValueError(
+            "Gemini n'a retourné aucun candidat dans la réponse.\n"
+            f"Réponse brute : {response}"
+        )
+
+    candidate = response.candidates[0]
+
+    # Logger la raison d'arrêt si disponible (SAFETY, RECITATION, etc.)
+    finish_reason = getattr(candidate, "finish_reason", None)
+    if finish_reason and str(finish_reason) not in ("FinishReason.STOP", "STOP", "1"):
+        logger.warning(f"Gemini finish_reason inattendu : {finish_reason}")
+
+    # Défense : content ou parts absents / None
+    content = getattr(candidate, "content", None)
+    parts   = getattr(content, "parts", None) if content else None
+
+    if not parts:
+        raise ValueError(
+            f"Gemini n'a retourné aucune partie dans la réponse (finish_reason={finish_reason}). "
+            "Le modèle a peut-être refusé de générer l'image (filtre de sécurité ou contenu). "
+            f"Réponse complète : {response}"
+        )
+
+    for part in parts:
         if hasattr(part, "inline_data") and part.inline_data:
             with open(local_path, "wb") as f:
                 f.write(part.inline_data.data)
@@ -156,12 +181,13 @@ def _copy_to_nginx(local_path: str, filename: str) -> str:
 # Génération d'image (prompt + référence)
 # ================================================================
 
-def generate_image(prompt_text: str) -> tuple[str, str]:
+def generate_image(prompt_text: str, max_retries: int = 3) -> tuple[str, str]:
     """
     Génère une image via Gemini à partir d'un prompt texte et de l'image de référence.
 
     Args:
         prompt_text : prompt décrivant la scène (construit par workflow_pinterest)
+        max_retries : nombre de tentatives si Gemini ne retourne pas d'image (défaut : 3)
 
     Returns:
         (chemin_local, url_publique_nginx)
@@ -169,29 +195,45 @@ def generate_image(prompt_text: str) -> tuple[str, str]:
 
     Raises:
         FileNotFoundError : si l'image de référence est absente
-        ValueError        : si Gemini ne retourne pas d'image
+        ValueError        : si Gemini ne retourne pas d'image après toutes les tentatives
     """
     logger.info(f"Génération image — modèle : {GEMINI_MODEL_IMAGE_PRO2}")
     logger.debug(f"Prompt (extrait) : {prompt_text[:200]}...")
 
     ref_part = _load_ref_image_part()
 
-    response = _client.models.generate_content(
-        model=GEMINI_MODEL_IMAGE_PRO2,
-        contents=[prompt_text, ref_part],
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE", "TEXT"],
-        ),
+    last_error: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                wait = random.uniform(3, 8)
+                logger.warning(f"Tentative {attempt}/{max_retries} — pause {wait:.1f}s avant retry...")
+                import time; time.sleep(wait)
+
+            response = _client.models.generate_content(
+                model=GEMINI_MODEL_IMAGE_PRO2,
+                contents=[prompt_text, ref_part],
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],
+                ),
+            )
+            logger.debug("Réponse Gemini reçue — extraction image...")
+
+            filename   = f"pending_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            local_path = _save_image_from_response(response, filename)
+
+            public_url = _copy_to_nginx(local_path, filename)
+            logger.info(f"Image générée : {local_path}")
+            return local_path, public_url
+
+        except ValueError as e:
+            last_error = e
+            logger.error(f"Tentative {attempt}/{max_retries} échouée : {e}")
+
+    raise ValueError(
+        f"Gemini n'a pas retourné d'image après {max_retries} tentatives. "
+        f"Dernière erreur : {last_error}"
     )
-    logger.debug("Réponse Gemini reçue — extraction image...")
-
-    filename   = f"pending_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    local_path = _save_image_from_response(response, filename)
-
-    public_url = _copy_to_nginx(local_path, filename)
-
-    logger.info(f"Image générée : {local_path}")
-    return local_path, public_url
 
 
 # ================================================================
