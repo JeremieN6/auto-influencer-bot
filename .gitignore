@@ -63,3 +63,6 @@ PROMPTS/
 
 #Scripts de développement
 scripts/
+
+#Commands de développement
+commands/
