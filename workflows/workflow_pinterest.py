@@ -42,13 +42,15 @@ logger = get_logger(__name__)
 TOTAL_STEPS = 3
 
 
-def run(concept: dict) -> tuple[str, str, str]:
+def run(concept: dict, keyword_pool: list[str] | None = None) -> tuple[str, str, str]:
     """
     Exécute le workflow Pinterest complet.
 
     Args:
-        concept : dict généré par concept_generator.generate_concept()
-                  {location, outfit, pose, mood, lighting, generated_at}
+        concept      : dict généré par concept_generator.generate_concept()
+                       {location, outfit, pose, mood, lighting, generated_at}
+        keyword_pool : pool de mots-clés Pinterest optionnel (mode --relevant).
+                       Si None, utilise _PERSON_KEYWORDS par défaut.
 
     Returns:
         (local_path, public_url, filename)
@@ -68,9 +70,8 @@ def run(concept: dict) -> tuple[str, str, str]:
     log_step(__name__, 1, TOTAL_STEPS, "Scraping Pinterest")
 
     from pinterest_scraper import scrape_pinterest_image
-    from config import PINTEREST_KEYWORDS
 
-    inspiration_path, source_url, search_query = scrape_pinterest_image(concept, PINTEREST_KEYWORDS)
+    inspiration_path, source_url, search_query = scrape_pinterest_image(concept, keyword_pool=keyword_pool)
     logger.info(f"Image d'inspiration : {inspiration_path}")
 
     # ── Affichage récap recherche Pinterest ─────────────────────

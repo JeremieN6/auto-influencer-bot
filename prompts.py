@@ -147,7 +147,11 @@ MADISON_JSON_TEMPLATE = {
 # Usage : filtre les images Pinterest sans personnage humain visible.
 # ================================================================
 PROMPT_PERSON_DETECTION = """
-Does this image contain a human person clearly visible?
+Does this image contain a human person who is:
+- Clearly visible (not a silhouette, not from very far away)
+- Facing the camera, in 3/4 front view, or at most in profile — NOT showing only their back
+- With their face at least partially visible
+
 Answer only with YES or NO. No explanation.
 """
 

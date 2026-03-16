@@ -108,16 +108,23 @@ def _is_valid_pinterest_image(url: str) -> bool:
     )
 
 
-def _build_query(concept: dict, boost_person_kw: str | None = None) -> str:
+def _build_query(
+    concept: dict,
+    boost_person_kw: str | None = None,
+    keyword_pool: list[str] | None = None,
+) -> str:
     """
-    Construit une requête Pinterest courte (2-3 mots) depuis le concept.
+    Construit une requête Pinterest courte depuis le concept.
 
     Structure : [pinterest_tag location] + [keyword personnage]
+    Les mots dupliqués entre les deux parties sont automatiquement supprimés.
 
     Args:
         concept          : dict du concept courant (contient "location")
-        boost_person_kw  : forcer un keyword personnage précis (pour fallback stratégie 2).
-                           Si None, pioche aléatoirement dans _PERSON_KEYWORDS.
+        boost_person_kw  : forcer un keyword personnage précis (fallback stratégie 2).
+                           Si None, pioche dans keyword_pool ou _PERSON_KEYWORDS.
+        keyword_pool     : pool de mots-clés alternatifs (mode --relevant).
+                           Si fourni, remplace _PERSON_KEYWORDS comme source de pioche.
 
     Returns:
         str : requête prête à encoder dans l'URL Pinterest
@@ -133,9 +140,18 @@ def _build_query(concept: dict, boost_person_kw: str | None = None) -> str:
     location_str = concept.get("location", "").lower()
     location_tag = pinterest_tags.get(location_str, location_str.split()[0] if location_str else "")
 
-    person_kw = boost_person_kw or random.choice(_PERSON_KEYWORDS)
+    pool = keyword_pool if keyword_pool else _PERSON_KEYWORDS
+    person_kw = boost_person_kw or random.choice(pool)
 
-    query = f"{location_tag} {person_kw}".strip()
+    # Déduplication : supprimer du person_kw les mots déjà présents dans location_tag
+    location_words = set(location_tag.lower().split())
+    person_words_deduped = [
+        w for w in person_kw.split()
+        if w.lower() not in location_words
+    ]
+    person_kw_clean = " ".join(person_words_deduped)
+
+    query = f"{location_tag} {person_kw_clean}".strip()
     logger.info(f"Requête Pinterest : '{query}'")
     return query
 
@@ -264,7 +280,7 @@ def _cleanup_temp_image(path: str | None) -> None:
 # Fonction principale (async interne)
 # ================================================================
 
-async def _scrape_async(concept: dict) -> tuple[str, str, str]:
+async def _scrape_async(concept: dict, keyword_pool: list[str] | None = None) -> tuple[str, str, str]:
     """
     Scrape Pinterest, sélectionne une image avec personnage.
 
@@ -318,7 +334,11 @@ async def _scrape_async(concept: dict) -> tuple[str, str, str]:
                 if strategy.get("force_location") is not None:
                     concept_for_query["location"] = strategy["force_location"]
 
-                query    = _build_query(concept_for_query, boost_person_kw=strategy["person_kw"])
+                query    = _build_query(
+                    concept_for_query,
+                    boost_person_kw=strategy["person_kw"],
+                    keyword_pool=keyword_pool,
+                )
                 img_urls = await _collect_image_urls(page, query)
 
                 if not img_urls:
@@ -379,14 +399,19 @@ async def _scrape_async(concept: dict) -> tuple[str, str, str]:
 # Point d'entrée public (synchrone)
 # ================================================================
 
-def scrape_pinterest_image(concept: dict, keywords: list[str] | None = None) -> tuple[str, str, str]:
+def scrape_pinterest_image(
+    concept: dict,
+    keywords: list[str] | None = None,
+    keyword_pool: list[str] | None = None,
+) -> tuple[str, str, str]:
     """
     Orchestre le scraping Pinterest.
 
     Args:
-        concept   : dict généré par concept_generator.generate_concept()
-        keywords  : ignoré — conservé pour compatibilité descendante.
-                    La logique de requête est entièrement gérée par _build_query().
+        concept      : dict généré par concept_generator.generate_concept()
+        keywords     : ignoré — conservé pour compatibilité descendante.
+        keyword_pool : pool de mots-clés à utiliser à la place de _PERSON_KEYWORDS
+                       (activé via --relevant dans main.py).
 
     Returns:
         (local_path, source_url, search_query)
@@ -399,7 +424,9 @@ def scrape_pinterest_image(concept: dict, keywords: list[str] | None = None) -> 
     """
     logger.info("=== Pinterest scraper démarré ===")
     logger.info(f"Concept : {concept}")
+    if keyword_pool:
+        logger.info(f"Mode relevant — pool de {len(keyword_pool)} keywords")
 
-    local_path, source_url, search_query = asyncio.run(_scrape_async(concept))
+    local_path, source_url, search_query = asyncio.run(_scrape_async(concept, keyword_pool=keyword_pool))
     logger.info(f"=== Pinterest scraper terminé → {local_path} ===")
     return local_path, source_url, search_query

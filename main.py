@@ -37,10 +37,43 @@ from logger import log, log_section, setup_logger
 from telegram_bot import save_pending_state, send_for_validation
 
 
+def _load_relevant_pool(category: str | None = None) -> list[str]:
+    """
+    Charge le pool de keywords depuis relevant_keywords dans variables.json.
+
+    Args:
+        category : nom de catégorie ("lifestyle", "beach", "outfit").
+                   Si None, retourne tous les keywords aplatis.
+
+    Returns:
+        liste aplatie de keywords
+    """
+    import json
+    from pathlib import Path
+
+    variables_path = Path(__file__).parent / "data" / "variables.json"
+    with open(variables_path, encoding="utf-8") as f:
+        variables = json.load(f)
+    relevant = variables.get("relevant_keywords", {})
+
+    if category:
+        pool = relevant.get(category)
+        if pool is None:
+            available = list(relevant.keys())
+            raise ValueError(
+                f"Catégorie --relevant '{category}' inconnue. "
+                f"Disponibles : {available}"
+            )
+        return pool
+    # Aplatir toutes les catégories
+    return [kw for kws in relevant.values() for kw in kws]
+
+
 def run_pipeline(
     workflow: str = "pinterest",
     override_params: dict | None = None,
     dry_run: bool = False,
+    relevant: str | None = None,
 ) -> dict:
     """
     Exécute le pipeline complet de génération de contenu.
@@ -49,6 +82,9 @@ def run_pipeline(
         workflow        : "pinterest" (V1) ou "generatif" (V2 — non implémenté)
         override_params : paramètres manuels depuis /run Telegram (V2)
         dry_run         : si True, pipeline sans envoi Telegram ni sauvegarde historique
+        relevant        : si fourni, active le mode relevant keywords.
+                          Valeur = catégorie ("lifestyle", "beach", "outfit")
+                          ou "all" pour toutes les catégories.
 
     Returns:
         dict avec les clés : image_path, public_url, filename, caption, concept, step
@@ -89,7 +125,12 @@ def run_pipeline(
 
     if workflow == "pinterest":
         from workflows.workflow_pinterest import run as run_workflow
-        local_path, public_url, filename, source_url, search_query = run_workflow(concept)
+        keyword_pool = None
+        if relevant:
+            category = None if relevant == "all" else relevant
+            keyword_pool = _load_relevant_pool(category)
+            log("info", "main", f"Mode relevant : {relevant} — {len(keyword_pool)} keywords chargés")
+        local_path, public_url, filename, source_url, search_query = run_workflow(concept, keyword_pool=keyword_pool)
     elif workflow == "pinterest_inpainting":
         from workflows.workflow_pinterest_inpainting import run as run_workflow  # type: ignore[assignment]
         local_path, public_url, filename = run_workflow(concept)
@@ -173,6 +214,18 @@ Exemples :
         default=False,
         help="Exécuter sans envoyer sur Telegram ni modifier l'historique",
     )
+    parser.add_argument(
+        "--relevant",
+        nargs="?",
+        const="all",
+        default=None,
+        metavar="CATEGORY",
+        help=(
+            "Utiliser les relevant_keywords de variables.json pour la requête Pinterest. "
+            "Sans valeur : toutes les catégories. "
+            "Avec valeur : catégorie précise (lifestyle, beach, outfit)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -181,7 +234,7 @@ if __name__ == "__main__":
     args = _parse_args()
 
     try:
-        run_pipeline(workflow=args.workflow, dry_run=args.dry_run)
+        run_pipeline(workflow=args.workflow, dry_run=args.dry_run, relevant=args.relevant)
         sys.exit(0)
     except KeyboardInterrupt:
         log("info", "main", "Pipeline interrompu par l'utilisateur")
