@@ -56,6 +56,12 @@ from logger import get_logger, setup_logger
 logger = get_logger(__name__)
 
 
+def _escape_md(text: str) -> str:
+    """Échappe les caractères spéciaux MarkdownV2 dans du contenu dynamique."""
+    import re
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\])', r'\\\1', str(text))
+
+
 # ================================================================
 # État partagé (inter-process via JSON)
 # ================================================================
@@ -113,8 +119,8 @@ async def send_for_validation(image_path: str, caption: str) -> None:
     logger.info(f"Envoi Telegram pour validation : {image_path}")
 
     text = (
-        f"📸 *Nouveau post {INFLUENCER_NAME}* — en attente de validation\n\n"
-        f"*Caption :*\n{caption}\n\n"
+        f"📸 *Nouveau post {_escape_md(INFLUENCER_NAME)}* — en attente de validation\n\n"
+        f"*Caption :*\n{_escape_md(caption)}\n\n"
         f"──────────────────\n"
         f"✅ /validate — Publier sur Instagram\n"
         f"✏️  /modify \\[instruction\\] — Régénérer avec modification\n"
@@ -156,7 +162,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update):
         return
     text = (
-        f"👋 Bonjour ! Je suis le bot de gestion de *{INFLUENCER_NAME}*.\n\n"
+        f"👋 Bonjour \\! Je suis le bot de gestion de *{INFLUENCER_NAME}*\\.\n\n"
         f"*Commandes disponibles :*\n"
         f"/status — État du système\n"
         f"/validate — Publier l'image en attente\n"
@@ -200,16 +206,17 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         next_str = "Aucun post enregistré — premier run à venir"
 
     has_pending = bool(state.get("image_path"))
+    caption_preview = _escape_md(str(state.get('caption', ''))[:80])
     pending_str = (
         f"✅ Image en attente de validation\n"
-        f"   Caption : {str(state.get('caption', ''))[:80]}..."
+        f"   Caption : {caption_preview}\.\.\."
         if has_pending else "⚪ Aucune image en attente"
     )
 
     text = (
-        f"📊 *Status {INFLUENCER_NAME}*\n\n"
+        f"📊 *Status {_escape_md(INFLUENCER_NAME)}*\n\n"
         f"{pending_str}\n\n"
-        f"📅 Prochain post auto : {next_str}\n"
+        f"📅 Prochain post auto : {_escape_md(next_str)}\n"
         f"📈 Total posts historique : {len(history)}"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
