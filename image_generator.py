@@ -649,7 +649,7 @@ def build_madison_json(concept: dict, calendar_step: dict) -> str:
     return template_str
 
 
-def generate_image_from_concept(concept: dict, calendar_step: dict) -> tuple[str, str, str]:
+def generate_image_from_concept(concept: dict, calendar_step: dict, max_retries: int = 3) -> tuple[str, str, str]:
     """
     Point d'entrée principal pour workflow_generatif.py.
     Assemble le JSON, formate le prompt, appelle Gemini, retourne les chemins.
@@ -657,32 +657,53 @@ def generate_image_from_concept(concept: dict, calendar_step: dict) -> tuple[str
     Args:
         concept       : dict de concept_generator.generate_concept()
         calendar_step : étape courante de calendar.json
+        max_retries   : nombre de tentatives si Gemini ne retourne pas d'image (défaut : 3)
 
     Returns:
         (local_path, public_url, filename)
+
+    Raises:
+        ValueError : si Gemini ne retourne pas d'image après toutes les tentatives
     """
     from prompts import PROMPT_JSON_TO_IMAGE
 
     logger.info(f"Génération image depuis concept — modèle : {GEMINI_MODEL_IMAGE_PRO2}")
 
-    json_scene    = build_madison_json(concept, calendar_step)
-    final_prompt  = PROMPT_JSON_TO_IMAGE.format(scene_json=json_scene)
-    ref_part      = _load_ref_image_part()
+    json_scene   = build_madison_json(concept, calendar_step)
+    final_prompt = PROMPT_JSON_TO_IMAGE.format(scene_json=json_scene)
+    ref_part     = _load_ref_image_part()
 
-    response = _client.models.generate_content(
-        model=GEMINI_MODEL_IMAGE_PRO2,
-        contents=[final_prompt, ref_part],
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE", "TEXT"],
-        ),
+    last_error: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                wait = random.uniform(3, 8)
+                logger.warning(f"Tentative {attempt}/{max_retries} — pause {wait:.1f}s avant retry...")
+                import time; time.sleep(wait)
+
+            response = _client.models.generate_content(
+                model=GEMINI_MODEL_IMAGE_PRO2,
+                contents=[final_prompt, ref_part],
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],
+                ),
+            )
+
+            filename   = f"generatif_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            local_path = _save_image_from_response(response, filename)
+            public_url = _copy_to_nginx(local_path, filename)
+
+            logger.info(f"Image générée (workflow génératif) : {local_path}")
+            return local_path, public_url, filename
+
+        except ValueError as e:
+            last_error = e
+            logger.error(f"Tentative {attempt}/{max_retries} échouée : {e}")
+
+    raise ValueError(
+        f"Gemini n'a pas retourné d'image après {max_retries} tentatives. "
+        f"Dernière erreur : {last_error}"
     )
-
-    filename   = f"generatif_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    local_path = _save_image_from_response(response, filename)
-    public_url = _copy_to_nginx(local_path, filename)
-
-    logger.info(f"Image générée (workflow génératif) : {local_path}")
-    return local_path, public_url, filename
 
 
 # ================================================================
@@ -967,40 +988,6 @@ def build_madison_json(concept: dict, calendar_step: dict) -> str:
     return template_str
 
 
-def generate_image_from_concept(concept: dict, calendar_step: dict) -> tuple[str, str, str]:
-    """
-    Point d'entrée principal pour workflow_generatif.py.
-    Assemble le JSON, formate le prompt, appelle Gemini, retourne les chemins.
-
-    Args:
-        concept       : dict de concept_generator.generate_concept()
-        calendar_step : étape courante de calendar.json
-
-    Returns:
-        (local_path, public_url, filename)
-    """
-    from prompts import PROMPT_JSON_TO_IMAGE
-
-    logger.info(f"Génération image depuis concept — modèle : {GEMINI_MODEL_IMAGE_PRO2}")
-
-    json_scene   = build_madison_json(concept, calendar_step)
-    final_prompt = PROMPT_JSON_TO_IMAGE.format(scene_json=json_scene)
-    ref_part     = _load_ref_image_part()
-
-    response = _client.models.generate_content(
-        model=GEMINI_MODEL_IMAGE_PRO2,
-        contents=[final_prompt, ref_part],
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE", "TEXT"],
-        ),
-    )
-
-    filename   = f"generatif_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    local_path = _save_image_from_response(response, filename)
-    public_url = _copy_to_nginx(local_path, filename)
-
-    logger.info(f"Image générée (workflow génératif) : {local_path}")
-    return local_path, public_url, filename
 
 
 # ================================================================

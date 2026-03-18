@@ -33,9 +33,17 @@ import os
 import subprocess
 import sys
 
-from telegram import Bot, Update
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 
 from config import (
     INFLUENCER_NAME,
@@ -347,27 +355,226 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ================================================================
-# Commande V2 — /run (scaffold)
+# Commande /run — ConversationHandler multi-étapes
 # ================================================================
-# TODO V2 :
-# Implémenter une ConversationHandler multi-étapes pour :
-#   1. Demander le workflow (Pinterest / Génératif)
-#   2. Demander mode (aléatoire / manuel)
-#   3. Si manuel → questions successives (lieu, tenue, mood, pose, lighting)
-#      avec options depuis variables.json + "Autre (saisie libre)"
-#   4. Pour chaque "Autre" → appeler validate_custom_input()
-#   5. Déclencher le pipeline avec override_params (persist=False)
-#
-# IMPORTANT : /run ne modifie PAS history.json ni le calendrier éditorial.
 
-async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """[V2] Lancement manuel avec choix workflow et paramètres — /run"""
+# États de la conversation
+(
+    RUN_WORKFLOW,
+    RUN_MODE,
+    RUN_LOCATION,
+    RUN_OUTFIT,
+    RUN_MOOD,
+    RUN_POSE,
+    RUN_LIGHTING,
+) = range(7)
+
+
+def _load_variables() -> dict:
+    """Charge variables.json pour construire les claviers de choix."""
+    import json
+    from pathlib import Path
+    path = Path(__file__).parent / "data" / "variables.json"
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _make_keyboard(options: list[str], cols: int = 2) -> InlineKeyboardMarkup:
+    """Crée un InlineKeyboardMarkup depuis une liste d'options."""
+    rows = [options[i:i + cols] for i in range(0, len(options), cols)]
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(o, callback_data=o) for o in row] for row in rows]
+    )
+
+
+async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Lancement manuel avec choix workflow et paramètres — /run"""
     if not _is_authorized(update):
-        return
+        return ConversationHandler.END
+
+    keyboard = _make_keyboard(["pinterest", "generatif"], cols=2)
     await update.message.reply_text(
-        "⚙️ La commande /run sera disponible en V2\\.\n\n"
-        "En attendant, utilisez /generate pour un concept aléatoire automatique\\.",
+        "🎬 *Lancement manuel — /run*\n\nQuel workflow ?",
+        reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_WORKFLOW
+
+
+async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Étape 1 : workflow choisi → demander mode."""
+    query = update.callback_query
+    await query.answer()
+    ctx.user_data["run_workflow"] = query.data
+    ctx.user_data["run_override"] = {}
+
+    keyboard = _make_keyboard(["aléatoire", "manuel"], cols=2)
+    await query.edit_message_text(
+        f"Workflow : *{query.data}*\n\nMode ?",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_MODE
+
+
+async def run_choose_mode(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Étape 2 : mode choisi → lancer directement ou poser les questions."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "aléatoire":
+        await query.edit_message_text(
+            f"✅ Workflow *{ctx.user_data['run_workflow']}* — mode aléatoire\n\n"
+            "🚀 Pipeline lancé\. Résultat dans quelques minutes\."  ,
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        await _launch_run_pipeline(ctx)
+        return ConversationHandler.END
+
+    # Mode manuel → demander la location
+    variables = _load_variables()
+    keyboard = _make_keyboard(variables["locations"])
+    await query.edit_message_text(
+        "📍 *Lieu ?*",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_LOCATION
+
+
+async def run_choose_location(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    ctx.user_data["run_override"]["location"] = query.data
+
+    variables = _load_variables()
+    keyboard = _make_keyboard(variables["outfits"])
+    await query.edit_message_text(
+        f"📍 Lieu : *{query.data}*\n\n👗 *Tenue ?*",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_OUTFIT
+
+
+async def run_choose_outfit(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    ctx.user_data["run_override"]["outfit"] = query.data
+
+    variables = _load_variables()
+    keyboard = _make_keyboard(variables["moods"])
+    await query.edit_message_text(
+        f"👗 Tenue : *{query.data}*\n\n😊 *Mood ?*",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_MOOD
+
+
+async def run_choose_mood(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    ctx.user_data["run_override"]["mood"] = query.data
+
+    variables = _load_variables()
+    keyboard = _make_keyboard(variables["poses"])
+    await query.edit_message_text(
+        f"😊 Mood : *{query.data}*\n\n🧍 *Pose ?*",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_POSE
+
+
+async def run_choose_pose(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    ctx.user_data["run_override"]["pose"] = query.data
+
+    variables = _load_variables()
+    keyboard = _make_keyboard(variables["lighting"])
+    await query.edit_message_text(
+        f"🧍 Pose : *{query.data}*\n\n💡 *Lumière ?*",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_LIGHTING
+
+
+async def run_choose_lighting(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    ctx.user_data["run_override"]["lighting"] = query.data
+
+    override = ctx.user_data["run_override"]
+    workflow = ctx.user_data["run_workflow"]
+
+    summary = (
+        f"✅ *Concept confirmé*\n\n"
+        f"Workflow : `{workflow}`\n"
+        f"📍 Lieu      : {override['location']}\n"
+        f"👗 Tenue     : {override['outfit']}\n"
+        f"😊 Mood      : {override['mood']}\n"
+        f"🧍 Pose      : {override['pose']}\n"
+        f"💡 Lumière   : {override['lighting']}\n\n"
+        "🚀 Pipeline lancé\. Résultat dans quelques minutes\."
+    )
+    await query.edit_message_text(summary, parse_mode=ParseMode.MARKDOWN_V2)
+    await _launch_run_pipeline(ctx)
+    return ConversationHandler.END
+
+
+async def run_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Annuler la conversation /run en cours."""
+    ctx.user_data.clear()
+    await update.message.reply_text("❌ /run annulé.")
+    return ConversationHandler.END
+
+
+async def _launch_run_pipeline(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Lance le pipeline via subprocess en passant les override_params
+    dans un fichier JSON temporaire.
+    IMPORTANT : n'affecte pas history.json ni le calendrier éditorial
+    (persist=False géré par --no-persist dans main.py).
+    """
+    import json
+    import tempfile
+
+    workflow       = ctx.user_data.get("run_workflow", "pinterest")
+    override_params = ctx.user_data.get("run_override") or {}
+
+    # Écrire les override_params dans un fichier temporaire
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as f:
+        json.dump(override_params, f, ensure_ascii=False)
+        params_path = f.name
+
+    python_exe  = sys.executable
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+
+    cmd = [python_exe, script_path, "--workflow", workflow, "--override-params", params_path]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    logger.info(f"/run pipeline lancé — PID {proc.pid} | workflow={workflow} | override={override_params}")
+
+
+def _build_run_handler() -> ConversationHandler:
+    """Construit et retourne le ConversationHandler pour /run."""
+    return ConversationHandler(
+        entry_points=[CommandHandler("run", cmd_run)],
+        states={
+            RUN_WORKFLOW: [CallbackQueryHandler(run_choose_workflow)],
+            RUN_MODE:     [CallbackQueryHandler(run_choose_mode)],
+            RUN_LOCATION: [CallbackQueryHandler(run_choose_location)],
+            RUN_OUTFIT:   [CallbackQueryHandler(run_choose_outfit)],
+            RUN_MOOD:     [CallbackQueryHandler(run_choose_mood)],
+            RUN_POSE:     [CallbackQueryHandler(run_choose_pose)],
+            RUN_LIGHTING: [CallbackQueryHandler(run_choose_lighting)],
+        },
+        fallbacks=[CommandHandler("cancel", run_cancel)],
+        per_message=False,
     )
 
 
@@ -392,7 +599,7 @@ def start_bot() -> None:
     app.add_handler(CommandHandler("modify",   cmd_modify))
     app.add_handler(CommandHandler("generate", cmd_generate))
     app.add_handler(CommandHandler("schedule", cmd_schedule))
-    app.add_handler(CommandHandler("run",      cmd_run))   # V2 scaffold
+    app.add_handler(_build_run_handler())
 
     logger.info("Handlers enregistrés — démarrage du polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

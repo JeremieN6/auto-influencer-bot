@@ -18,8 +18,10 @@ FLUX COMPLET (workflow Pinterest V1) :
 
 USAGE :
   python main.py                        → pipeline Pinterest (défaut)
-  python main.py --workflow generatif   → pipeline génératif V2 (non implémenté)
+  python main.py --workflow generatif   → pipeline génératif V2
   python main.py --dry-run              → exécute sans envoyer sur Telegram ni sauvegarder l'historique
+  python main.py --override-params /path/to/params.json  → concept manuel depuis /run Telegram
+  python main.py --no-persist           → ne modifie pas history.json (utilisé par /run)
 """
 
 import argparse
@@ -74,14 +76,16 @@ def run_pipeline(
     override_params: dict | None = None,
     dry_run: bool = False,
     relevant: str | None = None,
+    persist: bool = True,
 ) -> dict:
     """
     Exécute le pipeline complet de génération de contenu.
 
     Args:
-        workflow        : "pinterest" (V1) ou "generatif" (V2 — non implémenté)
-        override_params : paramètres manuels depuis /run Telegram (V2)
+        workflow        : "pinterest" (V1), "generatif" (V2), ou "pinterest_inpainting"
+        override_params : paramètres manuels depuis /run Telegram
         dry_run         : si True, pipeline sans envoi Telegram ni sauvegarde historique
+        persist         : si False, ne modifie pas history.json (utilisé par /run manuel)
         relevant        : si fourni, active le mode relevant keywords.
                           Valeur = catégorie ("lifestyle", "beach", "outfit")
                           ou "all" pour toutes les catégories.
@@ -108,7 +112,7 @@ def run_pipeline(
     log("info", "main", "=== Étape 1/4 : Génération concept ===")
     concept = generate_concept(
         override_params=override_params,
-        persist=not dry_run,
+        persist=persist and not dry_run,
     )
     log("info", "main", (
         f"Concept : {concept['mood']} | {concept['outfit']} | "
@@ -226,6 +230,18 @@ Exemples :
             "Avec valeur : catégorie précise (lifestyle, beach, outfit)."
         ),
     )
+    parser.add_argument(
+        "--override-params",
+        default=None,
+        metavar="PATH",
+        help="Chemin vers un fichier JSON contenant les override_params (depuis /run Telegram).",
+    )
+    parser.add_argument(
+        "--no-persist",
+        action="store_true",
+        default=False,
+        help="Ne pas enregistrer dans history.json (utilisé par /run pour les runs manuels).",
+    )
     return parser.parse_args()
 
 
@@ -233,8 +249,32 @@ if __name__ == "__main__":
     setup_logger()
     args = _parse_args()
 
+    # Charger les override_params depuis le fichier temp écrit par /run Telegram
+    override_params: dict | None = None
+    if args.override_params:
+        import json
+        try:
+            with open(args.override_params, encoding="utf-8") as f:
+                override_params = json.load(f)
+            log("info", "main", f"Override params chargés : {override_params}")
+        except Exception as e:
+            log("error", "main", f"Impossible de lire --override-params '{args.override_params}' : {e}")
+        finally:
+            # Supprimer le fichier temp après lecture
+            import os as _os
+            try:
+                _os.remove(args.override_params)
+            except Exception:
+                pass
+
     try:
-        run_pipeline(workflow=args.workflow, dry_run=args.dry_run, relevant=args.relevant)
+        run_pipeline(
+            workflow=args.workflow,
+            override_params=override_params,
+            dry_run=args.dry_run,
+            relevant=args.relevant,
+            persist=not args.no_persist,
+        )
         sys.exit(0)
     except KeyboardInterrupt:
         log("info", "main", "Pipeline interrompu par l'utilisateur")
