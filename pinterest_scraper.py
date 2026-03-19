@@ -76,6 +76,21 @@ _PERSON_KEYWORDS = [
     "instagram baddie aesthetic",
 ]
 
+# Keywords orientés vidéo — utilisés par workflow_video_pinterest.py
+# Construisent des requêtes du type : "video beach aesthetic" + "girl aesthetic"
+_VIDEO_PERSON_KEYWORDS = [
+    "aesthetic",
+    "mirror selfie",
+    "crop top outfit",
+    "baddie outfit",
+    "beach vibes",
+    "girl aesthetic",
+    "outfit video",
+    "casual look",
+    "summer aesthetic",
+    "lifestyle video",
+]
+
 
 # ================================================================
 # Helpers

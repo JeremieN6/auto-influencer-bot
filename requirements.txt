@@ -27,7 +27,17 @@ requests>=2.31
 # Variables d'environnement
 python-dotenv>=1.0
 
+# Extraction de frames vidéo
+# imageio-ffmpeg embarque les binaires ffmpeg — fonctionne sur Windows sans install système
+# Sur Linux/VPS, ffmpeg système (apt) est utilisé en priorité s'il est dans le PATH
+imageio-ffmpeg>=0.4.9
+ffmpeg-python>=0.2.0
+
+# JWT pour l'authentification Kling AI
+PyJWT>=2.0.0
+
 # ================================================================
 # Post-install :
 #   playwright install chromium
+#   sudo apt install ffmpeg  (Linux/VPS)
 # ================================================================

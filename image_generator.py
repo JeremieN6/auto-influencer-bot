@@ -200,7 +200,7 @@ def generate_image(prompt_text: str, max_retries: int = 3) -> tuple[str, str]:
     logger.info(f"Génération image — modèle : {GEMINI_MODEL_IMAGE_PRO2}")
     logger.debug(f"Prompt (extrait) : {prompt_text[:200]}...")
 
-    ref_part = _load_ref_image_part()
+    ref_part      = _load_ref_image_part()
 
     last_error: Exception | None = None
     for attempt in range(1, max_retries + 1):
@@ -265,7 +265,14 @@ def image_to_json(image_path: str) -> dict:
         model=GEMINI_MODEL_VISION,
         contents=[PROMPT_IMAGE_TO_JSON, img_part],
     )
-    raw_text = response.text.strip()
+    raw_text = (response.text or "").strip()
+
+    if not raw_text:
+        raise ValueError(
+            f"Gemini ({GEMINI_MODEL_VISION}) a retourné une réponse vide pour image_to_json.\n"
+            "Vérifier que GEMINI_MODEL_VISION est bien un modèle texte+vision "
+            "(ex: gemini-2.0-flash) et non un modèle de génération d'image."
+        )
 
     logger.debug(f"Réponse brute Gemini (extrait) : {raw_text[:300]}...")
 

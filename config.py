@@ -59,6 +59,15 @@ TELEGRAM_CHAT_ID       = os.getenv("TELEGRAM_CHAT_ID")
 INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
 INSTAGRAM_ACCOUNT_ID   = os.getenv("INSTAGRAM_ACCOUNT_ID")
 
+# Kling AI Motion Control (workflow vidéo)
+KLING_API_KEY    = os.getenv("KLINGAI_ACCESS_KEY")
+KLING_API_SECRET = os.getenv("KLINGAI_SECRET_KEY")
+KLING_MODEL      = os.getenv("KLINGAI_MODEL", "kling-v3")
+
+# TikTok Content Posting API
+TIKTOK_ACCESS_TOKEN = os.getenv("TIKTOK_ACCESS_TOKEN")
+TIKTOK_OPEN_ID      = os.getenv("TIKTOK_OPEN_ID")
+
 # ================================================================
 # SYSTEM CONFIG
 # ================================================================
@@ -75,11 +84,11 @@ LOG_PATH              = "logs/run.log"
 # Si un modèle n'est pas dispo, utiliser le fallback :
 #   FALLBACK_IMAGE_MODEL = "gemini-1.5-pro"
 # ----------------------------------------------------------------
-GEMINI_MODEL_IMAGE           = "gemini-3-pro-image-preview"                    # Pro — génération image
-GEMINI_MODEL_IMAGE_PRO2      = "gemini-3.1-flash-image-preview"                # Pro 2 — préféré si dispo
-GEMINI_MODEL_VISION          = "gemini-3-pro-image-preview"                    # Vision — détection personnage
-GEMINI_MODEL_FALLBACK        = "gemini-1.5-flash"                              # Fallback si preview indispo
-GEMINI_MODEL_INPAINTING      = "gemini-2.0-flash-preview-image-generation"     # Inpainting natif — workflow inpainting
+GEMINI_MODEL_IMAGE           = "gemini-3-pro-image-preview"                    # Génération image (Gemini 3)
+GEMINI_MODEL_IMAGE_PRO2      = "gemini-3.1-flash-image-preview"                # Génération image flash (Gemini 3.1)
+GEMINI_MODEL_VISION          = "gemini-2.5-flash"                              # Analyse texte+vision (JSON, détection)
+GEMINI_MODEL_FALLBACK        = "gemini-2.5-flash"                              # Fallback stable texte+vision
+GEMINI_MODEL_INPAINTING      = "gemini-3-pro-image-preview"                    # Inpainting natif — workflow inpainting
 
 # ----------------------------------------------------------------
 # Hébergement temporaire nginx (VPS)
@@ -95,6 +104,7 @@ NGINX_BASE_URL   = os.getenv("NGINX_BASE_URL",   "https://ton-domaine.com/output
 
 DATA_DIR              = "data"
 OUTPUTS_DIR           = "outputs"
+VIDEOS_DIR            = f"{DATA_DIR}/videos"
 VARIABLES_PATH        = f"{DATA_DIR}/variables.json"
 HISTORY_PATH          = f"{DATA_DIR}/history.json"
 CALENDAR_PATH         = f"{DATA_DIR}/calendar.json"

@@ -1,0 +1,4 @@
+# Dossier data/videos/
+# Déposer ici les vidéos locales pour tester workflow_video_local.py
+# Ce dossier est visible dans git mais son contenu (vidéos) est ignoré.
+# Formats acceptés : .mp4 .mov .webm .avi

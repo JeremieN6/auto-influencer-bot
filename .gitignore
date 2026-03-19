@@ -24,6 +24,9 @@ outputs/*.jpg
 outputs/*.jpeg
 outputs/*.png
 outputs/*.webp
+outputs/*.mp4
+outputs/*.mov
+outputs/*.webm
 
 # Logs
 logs/*.log
@@ -39,6 +42,21 @@ data/ref_*.jpeg
 data/ref_*.png
 data/ref_*.webp
 data/ref_*.avif
+
+# Vidéos locales (contenu du dossier — le dossier lui-même est visible)
+# Le fichier .gitkeep maintient le dossier dans git
+data/videos/*.mp4
+data/videos/*.mov
+data/videos/*.webm
+data/videos/*.avi
+data/videos/*.mkv
+data/videos/*.flv
+data/videos/*.mpeg
+# Images extraites des vidéos (ne pas commit — données sensibles/propriétaires)
+data/videos/*.jpg
+data/videos/*.jpeg
+data/videos/*.png
+data/videos/*.webp
 
 # Fichiers temporaire / de travail
 /temp/
@@ -60,6 +78,7 @@ test-results/
 
 #Prompt
 PROMPTS/
+prompts/
 
 #Scripts de développement
 scripts/

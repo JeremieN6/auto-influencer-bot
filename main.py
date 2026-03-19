@@ -36,7 +36,7 @@ from concept_generator import (
     get_current_calendar_step,
 )
 from logger import log, log_section, setup_logger
-from telegram_bot import save_pending_state, send_for_validation
+from telegram_bot import save_pending_state, send_for_validation, send_video_for_validation
 
 
 def _load_relevant_pool(category: str | None = None) -> list[str]:
@@ -143,8 +143,65 @@ def run_pipeline(
         from workflows.workflow_generatif import run as run_workflow  # type: ignore[assignment]
         local_path, public_url, filename = run_workflow(concept)
         source_url, search_query = None, None
+
+    elif workflow in ("video_local", "video_pinterest"):
+        # Workflows vidéo — la caption est générée DANS le workflow
+        log("info", "main", f"=== Workflow vidéo : {workflow} ===")
+
+        if workflow == "video_local":
+            from workflows.workflow_video_local import run as run_video_workflow
+        else:
+            from workflows.workflow_video_pinterest import run as run_video_workflow  # type: ignore[assignment]
+
+        video_path, video_public_url, video_filename, caption, video_type, madison_image_path = run_video_workflow(concept)
+        log("info", "main", f"Vidéo générée : {video_path} | type={video_type}")
+        log("info", "main", f"Caption : {caption[:100]}...")
+
+        video_state = {
+            "media_type":       "video",
+            "video_path":       video_path,
+            "video_public_url": video_public_url,
+            "video_filename":   video_filename,
+            "caption":          caption,
+            "video_type":       video_type,
+            # Champs image — None pour les workflows vidéo
+            "image_path":     None,
+            "public_url":     None,
+            "image_filename": None,
+            "concept":        concept,
+            "step":           step,
+            "last_prompt":    None,
+        }
+
+        if dry_run:
+            log("info", "main", "[DRY RUN] — Pas d'envoi Telegram, pas de sauvegarde historique")
+            sep = "═" * 60
+            madison_line = f"  Image Madison : {madison_image_path}\n" if madison_image_path else ""
+            log("info", "main",
+                f"\n{sep}\n"
+                f"  DRY RUN — WORKFLOW VIDÉO\n"
+                f"{sep}\n"
+                f"{madison_line}"
+                f"  Vidéo générée : {video_path}\n"
+                f"  Type          : {video_type}\n"
+                f"{sep}"
+            )
+            log("info", "main", f"[DRY RUN] Caption :\n{caption}")
+        else:
+            save_pending_state(video_state)
+            log("info", "main", "pending_state vidéo sauvegardé")
+            asyncio.run(send_video_for_validation(video_path, caption, video_type))
+            log("info", "main", "Vidéo envoyée sur Telegram — en attente de validation")
+
+        log_section("main", "PIPELINE VIDÉO TERMINÉ")
+        return video_state
+
     else:
-        raise ValueError(f"Workflow inconnu : '{workflow}'. Valeurs acceptées : 'pinterest', 'pinterest_inpainting', 'generatif'")
+        raise ValueError(
+            f"Workflow inconnu : '{workflow}'. "
+            "Valeurs acceptées : 'pinterest', 'pinterest_inpainting', 'generatif', "
+            "'video_local', 'video_pinterest'"
+        )
     log("info", "main", f"Image générée : {local_path}")
 
     # ── Étape 4 : Caption ────────────────────────────────────────
@@ -208,7 +265,7 @@ Exemples :
     )
     parser.add_argument(
         "--workflow",
-        choices=["pinterest", "pinterest_inpainting", "generatif"],
+        choices=["pinterest", "pinterest_inpainting", "generatif", "video_local", "video_pinterest"],
         default="pinterest",
         help="Workflow à utiliser (défaut : pinterest)",
     )

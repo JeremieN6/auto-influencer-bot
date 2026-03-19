@@ -94,6 +94,7 @@ def clear_pending_state() -> None:
 
 def _empty_state() -> dict:
     return {
+        # —— état image (existant) ——
         "image_path":     None,
         "public_url":     None,
         "caption":        None,
@@ -101,6 +102,12 @@ def _empty_state() -> dict:
         "step":           None,
         "last_prompt":    None,
         "image_filename": None,
+        # —— état vidéo (V3) ——
+        "media_type":       "image",   # "image" | "video"
+        "video_path":       None,
+        "video_public_url": None,
+        "video_filename":   None,
+        "video_type":       None,      # "reel" | "story"
     }
 
 
@@ -138,6 +145,57 @@ async def send_for_validation(image_path: str, caption: str) -> None:
             )
 
     logger.info("Message Telegram envoyé avec succès")
+
+
+async def send_video_for_validation(video_path: str, caption: str, video_type: str) -> None:
+    """
+    Envoie la vidéo générée + caption sur Telegram avec les boutons de publication.
+    Sauvegarde l'état dans pending_state.json.
+
+    Args:
+        video_path : chemin local de la vidéo
+        caption    : caption générée
+        video_type : "reel" (personnage + Motion Control) ou "story" (ambiance)
+    """
+    logger.info(f"Envoi Telegram vidéo pour validation : {video_path} | type={video_type}")
+
+    if video_type == "reel":
+        type_label = "Reel"
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📸 Instagram Reels",  callback_data="pub_video_reel"),
+                InlineKeyboardButton("🎵 TikTok",             callback_data="pub_video_tiktok"),
+            ],
+            [
+                InlineKeyboardButton("📸🎵 Les deux",          callback_data="pub_video_both"),
+                InlineKeyboardButton("❌ Ignorer",            callback_data="pub_video_ignore"),
+            ],
+        ])
+    else:  # story
+        type_label = "Story"
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Publier Story Instagram", callback_data="pub_video_story"),
+                InlineKeyboardButton("❌ Ignorer",               callback_data="pub_video_ignore"),
+            ],
+        ])
+
+    text = (
+        f"🎬 *Nouveau {type_label} {_escape_md(INFLUENCER_NAME)}* \u2014 en attente de validation\n\n"
+        f"*Caption :*\n{_escape_md(caption)}"
+    )
+
+    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+        with open(video_path, "rb") as vid:
+            await bot.send_video(
+                chat_id=TELEGRAM_CHAT_ID,
+                video=vid,
+                caption=text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+
+    logger.info("Message vidéo Telegram envoyé avec succès")
 
 
 # ================================================================
@@ -399,7 +457,19 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not _is_authorized(update):
         return ConversationHandler.END
 
-    keyboard = _make_keyboard(["pinterest", "generatif"], cols=2)
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🖼️ Image Pinterest",  callback_data="pinterest"),
+            InlineKeyboardButton("🖼️ Image Génératif", callback_data="generatif"),
+        ],
+        [
+            InlineKeyboardButton("🎬 Vidéo Local",      callback_data="video_local"),
+            InlineKeyboardButton("🎬 Vidéo Pinterest",  callback_data="video_pinterest"),
+        ],
+        [
+            InlineKeyboardButton("🎬 Higgsfield (bientôt)", callback_data="video_higgsfield"),
+        ],
+    ])
     await update.message.reply_text(
         "🎬 *Lancement manuel — /run*\n\nQuel workflow ?",
         reply_markup=keyboard,
@@ -408,16 +478,41 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return RUN_WORKFLOW
 
 
+_VIDEO_WORKFLOWS = {"video_local", "video_pinterest", "video_higgsfield"}
+
+
 async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    """Étape 1 : workflow choisi → demander mode."""
+    """Étape 1 : workflow choisi.
+    - Workflows vidéo : lancement direct (pas de personnalisation manuelle)
+    - Workflows image : proposer mode aléatoire/manuel
+    """
     query = update.callback_query
     await query.answer()
-    ctx.user_data["run_workflow"] = query.data
+    workflow = query.data
+    ctx.user_data["run_workflow"] = workflow
     ctx.user_data["run_override"] = {}
 
+    # Workflows vidéo → lancer directement
+    if workflow in _VIDEO_WORKFLOWS:
+        if workflow == "video_higgsfield":
+            await query.edit_message_text(
+                "🎬 *Workflow Higgsfield* — non implémenté \(V3 futur\)\.",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            return ConversationHandler.END
+
+        await query.edit_message_text(
+            f"✅ Workflow *{_escape_md(workflow)}* sélectionné\n\n"
+            "🎬 Pipeline vidéo lancé\. Résultat dans quelques minutes\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        await _launch_run_pipeline(ctx)
+        return ConversationHandler.END
+
+    # Workflows image → proposer mode
     keyboard = _make_keyboard(["aléatoire", "manuel"], cols=2)
     await query.edit_message_text(
-        f"Workflow : *{query.data}*\n\nMode ?",
+        f"Workflow : *{_escape_md(workflow)}*\n\nMode ?",
         reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN_V2,
     )
@@ -589,6 +684,109 @@ def _build_run_handler() -> ConversationHandler:
 # Démarrage du service bot (point d'entrée systemd)
 # ================================================================
 
+# ================================================================
+# Callbacks publication vidéo
+# ================================================================
+
+async def handle_pub_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Gère les boutons de publication vidéo envoyés par send_video_for_validation().
+    Callback data : pub_video_reel | pub_video_tiktok | pub_video_both |
+                    pub_video_story | pub_video_ignore
+    """
+    query = update.callback_query
+    await query.answer()
+
+    if not _is_authorized(update):
+        return
+
+    action = query.data
+    state  = load_pending_state()
+
+    if action == "pub_video_ignore":
+        clear_pending_state()
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await query.message.reply_text("❌ Vidéo ignorée.")
+        logger.info("Vidéo ignorée par l'utilisateur")
+        return
+
+    video_public_url = state.get("video_public_url")
+    video_filename   = state.get("video_filename", "")
+    video_path       = state.get("video_path", "")
+    caption          = state.get("caption", "")
+
+    if not video_public_url:
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await query.message.reply_text("❌ Aucune vidéo en attente dans le pending_state.")
+        return
+
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await query.message.reply_text("⏳ Publication en cours...")
+
+    errors = []
+
+    try:
+        if action in ("pub_video_reel", "pub_video_both"):
+            from instagram_publisher import publish_reel
+            result = publish_reel(video_public_url, caption, video_filename)
+            media_id = result.get("id", "?")
+            await query.message.reply_text(
+                f"✅ *Reel publié sur Instagram\!*\nMedia ID : `{_escape_md(media_id)}`",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            logger.info(f"Reel Instagram publié — media_id={media_id}")
+    except Exception as e:
+        logger.error(f"Erreur publication Reel Instagram : {e}")
+        errors.append(f"Instagram Reel : {e}")
+
+    try:
+        if action in ("pub_video_tiktok", "pub_video_both"):
+            from tiktok_publisher import publish_video
+            publish_id = publish_video(video_path, caption)
+            await query.message.reply_text(
+                f"✅ *Vidéo publiée sur TikTok\!*\nPublish ID : `{_escape_md(publish_id)}`",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            logger.info(f"Vidéo TikTok publiée — publish_id={publish_id}")
+    except Exception as e:
+        logger.error(f"Erreur publication TikTok : {e}")
+        errors.append(f"TikTok : {e}")
+
+    try:
+        if action == "pub_video_story":
+            from instagram_publisher import publish_story_video
+            result = publish_story_video(video_public_url, video_filename)
+            media_id = result.get("id", "?")
+            await query.message.reply_text(
+                f"✅ *Story publiée sur Instagram\!*\nMedia ID : `{_escape_md(media_id)}`",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            logger.info(f"Story Instagram publiée — media_id={media_id}")
+    except Exception as e:
+        logger.error(f"Erreur publication Story Instagram : {e}")
+        errors.append(f"Instagram Story : {e}")
+
+    if errors:
+        await query.message.reply_text(
+            "❌ Erreurs lors de la publication :\n" + "\n".join(errors)
+        )
+    else:
+        clear_pending_state()
+
+
+# ================================================================
+# Démarrage du service bot (point d'entrée systemd)
+# ================================================================
+
 def start_bot() -> None:
     """
     Lance le bot Telegram en mode polling.
@@ -607,6 +805,18 @@ def start_bot() -> None:
     app.add_handler(CommandHandler("generate", cmd_generate))
     app.add_handler(CommandHandler("schedule", cmd_schedule))
     app.add_handler(_build_run_handler())
+
+    # Callbacks publication vidéo (indépendants de la conversation /run)
+    _VIDEO_PUB_ACTIONS = (
+        "pub_video_reel", "pub_video_tiktok", "pub_video_both",
+        "pub_video_story", "pub_video_ignore",
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_pub_video,
+            pattern="^(" + "|".join(_VIDEO_PUB_ACTIONS) + ")$",
+        )
+    )
 
     logger.info("Handlers enregistrés — démarrage du polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -65,9 +65,17 @@ aspect_ratio must be one of: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9
 # Le JSON de scène est injecté dynamiquement avant l'envoi à Gemini.
 # ================================================================
 PROMPT_JSON_TO_IMAGE = """
-Generate a professional image featuring the character in the attached reference sheet.
-Use the JSON below as the scene description. Respect all compositional, lighting,
-and environmental details. The character's face and appearance must match the reference sheet exactly.
+Generate a professional photo-realistic image featuring the character described below.
+Use the attached reference sheet for the character's face, hair and skin tone.
+
+CRITICAL — body proportions to reproduce exactly:
+- Very large, full bust with visible cleavage, stretching the top garment
+- Narrow defined waist, pronounced hourglass silhouette
+- Wide hips and rounded glutes
+These body proportions are NON-NEGOTIABLE and must be clearly visible in the final image.
+
+Respect all compositional, lighting, environmental and clothing details from the Scene JSON below.
+The character's face must match the reference sheet exactly.
 [CHARACTER REFERENCE IMAGE ATTACHED]
 
 Scene JSON:
