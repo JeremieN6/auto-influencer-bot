@@ -329,16 +329,23 @@ def generate_video_motion_control(
         "Content-Type":  "application/json",
     }
 
-    # ── Calculer la durée Kling depuis la vidéo source ──────────
-    # Kling supporte uniquement 5 ou 10 secondes.
-    # On choisit la valeur la plus proche de la durée source.
-    source_duration = 5.0
+    # ── Valider la durée de la vidéo source ───────────────────
+    # Motion Control n'accepte PAS de paramètre "duration" — la durée de sortie
+    # est égale à celle de la vidéo source, dans la limite imposée par character_orientation :
+    #   "video" → max 30s  |  "image" → max 10s
+    max_source_duration = 30 if character_orientation == "video" else 10
     try:
         source_duration = _get_video_duration(source_video_path)
-        kling_duration  = 10 if abs(source_duration - 10) <= abs(source_duration - 5) else 5
+        if source_duration > max_source_duration:
+            raise ValueError(
+                f"Vidéo source trop longue ({source_duration:.1f}s) — "
+                f"character_orientation='{character_orientation}' limite à {max_source_duration}s."
+            )
+        logger.info(f"Durée vidéo source : {source_duration:.1f}s (max {max_source_duration}s)")
+    except ValueError:
+        raise
     except Exception:
-        kling_duration  = 5
-    logger.info(f"Durée générée   : {kling_duration}s (source = {source_duration:.1f}s)")
+        logger.warning("Impossible de lire la durée de la vidéo source — validation ignorée")
 
     # Selon la doc Kling : image_url accepte une URL OU un Base64 brut (sans préfixe data:)
     payload: dict = {
@@ -346,7 +353,6 @@ def generate_video_motion_control(
         "image_url":             image_payload_value,
         "video_url":             video_public_url,
         "character_orientation": character_orientation,
-        "duration":              kling_duration,
         "mode":                  mode,
     }
     if motion_prompt:
