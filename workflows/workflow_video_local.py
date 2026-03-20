@@ -244,7 +244,7 @@ def _run_person_branch(
     caption        = generate_caption(caption_prompt)
 
     logger.info(f"=== Workflow Vidéo Local terminé (reel) : {final_video_path} ===")
-    return final_video_path, public_url, filename, caption, "reel", madison_image_path
+    return final_video_path, public_url, filename, caption, "reel", madison_image_path, ""
 
 
 # ================================================================
@@ -271,4 +271,4 @@ def _run_ambiance_branch(
     caption        = generate_caption(caption_prompt)
 
     logger.info(f"=== Workflow Vidéo Local terminé (story/ambiance) : {video_path} ===")
-    return video_path, public_url, filename, caption, "story", ""
+    return video_path, public_url, filename, caption, "story", "", ""

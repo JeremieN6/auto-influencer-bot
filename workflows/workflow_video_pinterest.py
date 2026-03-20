@@ -63,9 +63,9 @@ def _build_video_query(variables: dict) -> str:
     tag_values = list(video_tags.values())
     chosen_tag = random.choice(tag_values)
 
-    # Optionnellement ajouter un keyword personnage (50% du temps)
+    # Ajouter un keyword personnage dans 80% des cas pour maximiser les résultats avec personnage
     person_kw = ""
-    if random.random() < 0.5:
+    if random.random() < 0.8:
         person_kw = random.choice(_VIDEO_PERSON_KEYWORDS)
         # Déduplication
         tag_words    = set(chosen_tag.lower().split())
@@ -77,13 +77,57 @@ def _build_video_query(variables: dict) -> str:
     return query
 
 
+async def _extract_video_url_from_pin(page, pin_url: str) -> str | None:
+    """
+    Visite une page de pin individuelle et extrait l'URL vidéo .mp4.
+
+    Pinterest embarque les métadonnées du pin dans un JSON côté serveur
+    (balise <script id="__PWS_DATA__"> ou __PWS_INITIAL_STATE__).
+    Les URLs vidéo y sont présentes en clair, au format :
+        v.pinimg.com/videos/mc/720p/XX/XX/XXXXX.mp4
+    """
+    import asyncio
+    import re as _re
+    try:
+        await page.goto(pin_url, wait_until="domcontentloaded", timeout=20_000)
+        await asyncio.sleep(random.uniform(1.5, 2.5))
+
+        # Chercher dans le JSON embarqué (__PWS_DATA__ ou __PWS_INITIAL_STATE__)
+        content = await page.content()
+        matches = _re.findall(
+            r'https?://v\d*\.pinimg\.com[^"\'<>\s\\]*\.mp4[^"\'<>\s\\]*',
+            content
+        )
+        if matches:
+            # Préférer les 720p, sinon prendre la première
+            for m in matches:
+                if "720p" in m or "1080p" in m:
+                    return m
+            return matches[0]
+    except Exception as e:
+        logger.warning(f"Erreur lecture pin {pin_url} : {e}")
+    return None
+
+
 async def _scrape_pinterest_video(query: str) -> str:
     """
     Recherche sur Pinterest et télécharge la première vidéo .mp4 trouvée.
     Retourne le chemin local de la vidéo téléchargée.
+
+    Stratégie :
+      1. Page de recherche /search/videos/ → collecte des hrefs /pin/XXXXX/
+      2. Visite de chaque page de pin individuellement
+      3. Extraction URL .mp4 depuis le JSON embarqué (__PWS_DATA__)
+      4. Téléchargement HTTP direct
+
+    Pourquoi cette approche :
+      La page de recherche Pinterest utilise du lazy-loading + HLS streams (m3u8)
+      + blob URLs — les .mp4 ne sont jamais visibles dans le DOM ou les réponses
+      réseau de la page de recherche. Les pages de pins individuelles embarquent
+      en revanche les URLs directes en clair dans un <script> JSON côté serveur.
     """
     import urllib.parse
-    import time
+    import asyncio
 
     import requests
     from playwright.async_api import async_playwright
@@ -92,10 +136,11 @@ async def _scrape_pinterest_video(query: str) -> str:
     from pinterest_scraper import USER_AGENTS
 
     PINTEREST_SEARCH_URL = "https://www.pinterest.com/search/videos/?q={query}"
-    encoded_q = urllib.parse.quote(query)
-    url        = PINTEREST_SEARCH_URL.format(query=encoded_q)
+    PINTEREST_BASE        = "https://www.pinterest.com"
+    encoded_q             = urllib.parse.quote(query)
+    search_url            = PINTEREST_SEARCH_URL.format(query=encoded_q)
 
-    logger.info(f"Navigation Pinterest vidéo → {url}")
+    logger.info(f"Navigation Pinterest vidéo → {search_url}")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -106,88 +151,81 @@ async def _scrape_pinterest_video(query: str) -> str:
         page = await context.new_page()
 
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            # ── Étape 1 : page de recherche → collecter les hrefs de pins ──
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
 
-            # Attendre le chargement des vidéos
-            try:
-                await page.wait_for_selector("video[src]", timeout=12_000)
-            except Exception:
-                logger.warning("Aucune balise <video> trouvée — tentative via attribut data-src")
+            # Scroll pour charger plus de pins
+            for _ in range(4):
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+                await asyncio.sleep(random.uniform(1.0, 1.8))
 
-            # Scroll léger
-            import asyncio
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 3)")
-            await asyncio.sleep(random.uniform(2.0, 4.0))
-
-            # Extraire les URLs vidéo
-            video_urls: list[str] = await page.evaluate("""
+            pin_hrefs: list[str] = await page.evaluate("""
                 () => {
-                    const sources = [];
-                    // Balises video
-                    document.querySelectorAll('video[src]').forEach(v => {
-                        if (v.src && v.src.includes('.mp4')) sources.push(v.src);
+                    const links = new Set();
+                    document.querySelectorAll('a[href*="/pin/"]').forEach(a => {
+                        const href = a.getAttribute('href');
+                        if (href && /^\\/pin\\/\\d+/.test(href)) links.add(href);
                     });
-                    // Balises source dans video
-                    document.querySelectorAll('video source[src]').forEach(s => {
-                        if (s.src && s.src.includes('.mp4')) sources.push(s.src);
-                    });
-                    // data-video-src sur les pins
-                    document.querySelectorAll('[data-video-src]').forEach(el => {
-                        const src = el.getAttribute('data-video-src');
-                        if (src && src.includes('.mp4')) sources.push(src);
-                    });
-                    return [...new Set(sources)];
+                    return [...links].slice(0, 10);
                 }
             """)
 
-            logger.info(f"{len(video_urls)} URL(s) vidéo collectées")
+            logger.info(f"{len(pin_hrefs)} hrefs de pins collectés")
+
+            if not pin_hrefs:
+                raise RuntimeError(
+                    f"Aucun pin trouvé sur Pinterest pour la requête : '{query}'\n"
+                    "Vérifier que la page de recherche affiche bien des résultats."
+                )
+
+            # ── Étape 2 : visiter chaque pin pour extraire l'URL vidéo ──────
+            video_url: str | None = None
+            for href in pin_hrefs:
+                pin_url = PINTEREST_BASE + href
+                logger.info(f"Lecture pin : {pin_url}")
+                video_url = await _extract_video_url_from_pin(page, pin_url)
+                if video_url:
+                    logger.info(f"URL vidéo trouvée : {video_url}")
+                    break
+                await asyncio.sleep(random.uniform(0.8, 1.5))
 
         finally:
             await browser.close()
 
-    if not video_urls:
+    if not video_url:
         raise RuntimeError(
             f"Aucune vidéo .mp4 trouvée sur Pinterest pour la requête : '{query}'\n"
             "Essayer avec un autre tag vidéo ou vérifier que Pinterest affiche bien des vidéos."
         )
 
-    # Télécharger la première vidéo
+    # ── Étape 3 : téléchargement HTTP direct ────────────────────
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
     from datetime import datetime
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
+    headers = {"User-Agent": random.choice(USER_AGENTS), "Referer": "https://www.pinterest.com/"}
 
-    for video_url in video_urls[:3]:   # essayer les 3 premières URLs
-        try:
-            resp = requests.get(video_url, headers=headers, timeout=60, stream=True)
-            if resp.status_code != 200:
-                logger.warning(f"Download vidéo échoué ({resp.status_code}) : {video_url}")
-                continue
+    try:
+        resp = requests.get(video_url, headers=headers, timeout=60, stream=True)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Download vidéo échoué ({resp.status_code}) : {video_url}")
 
-            ext      = ".mp4"
-            filename = f"pinterest_video_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}{ext}"
-            path     = os.path.join(OUTPUTS_DIR, filename)
+        filename = f"pinterest_video_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.mp4"
+        path     = os.path.join(OUTPUTS_DIR, filename)
 
-            with open(path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    f.write(chunk)
+        with open(path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
 
-            size_mb = os.path.getsize(path) / (1024 * 1024)
-            if size_mb < 0.1:
-                logger.warning(f"Vidéo trop petite ({size_mb:.2f} MB) — ignorée")
-                os.remove(path)
-                continue
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+        if size_mb < 0.1:
+            os.remove(path)
+            raise RuntimeError(f"Vidéo téléchargée trop petite ({size_mb:.2f} MB) — URL invalide ?")
 
-            logger.info(f"Vidéo Pinterest téléchargée : {path} ({size_mb:.1f} MB)")
-            return path
+        logger.info(f"Vidéo Pinterest téléchargée : {path} ({size_mb:.1f} MB)")
+        return path
 
-        except Exception as e:
-            logger.warning(f"Erreur download vidéo : {e}")
-            continue
-
-    raise RuntimeError(
-        f"Échec download de toutes les vidéos Pinterest pour : '{query}'"
-    )
+    except Exception as e:
+        raise RuntimeError(f"Erreur download vidéo Pinterest : {e}") from e
 
 
 # ================================================================
@@ -302,7 +340,7 @@ def run(concept: dict | None = None) -> tuple[str, str, str, str, str]:
         caption = generate_caption(_build_video_caption_prompt(scene_json, step, "reel"))
 
         logger.info(f"=== Workflow Vidéo Pinterest terminé (reel) : {final_video_path} ===")
-        return final_video_path, public_url, filename, caption, "reel", madison_image_path
+        return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path
 
     else:
         # ── Branche Ambiance → Story ─────────────────────────────
@@ -325,4 +363,4 @@ def run(concept: dict | None = None) -> tuple[str, str, str, str, str]:
         caption = generate_caption(caption_prompt)
 
         logger.info(f"=== Workflow Vidéo Pinterest terminé (story) : {video_path} ===")
-        return video_path, public_url, filename, caption, "story", ""
+        return video_path, public_url, filename, caption, "story", "", video_path

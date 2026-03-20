@@ -153,7 +153,7 @@ def run_pipeline(
         else:
             from workflows.workflow_video_pinterest import run as run_video_workflow  # type: ignore[assignment]
 
-        video_path, video_public_url, video_filename, caption, video_type, madison_image_path = run_video_workflow(concept)
+        video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept)
         log("info", "main", f"Vidéo générée : {video_path} | type={video_type}")
         log("info", "main", f"Caption : {caption[:100]}...")
 
@@ -176,14 +176,16 @@ def run_pipeline(
         if dry_run:
             log("info", "main", "[DRY RUN] — Pas d'envoi Telegram, pas de sauvegarde historique")
             sep = "═" * 60
-            madison_line = f"  Image Madison : {madison_image_path}\n" if madison_image_path else ""
+            madison_line = f"  Image Madison   : {madison_image_path}\n" if madison_image_path else ""
+            source_line  = f"  Vidéo source    : {source_video_path}\n" if source_video_path else ""
             log("info", "main",
                 f"\n{sep}\n"
                 f"  DRY RUN — WORKFLOW VIDÉO\n"
                 f"{sep}\n"
+                f"{source_line}"
                 f"{madison_line}"
-                f"  Vidéo générée : {video_path}\n"
-                f"  Type          : {video_type}\n"
+                f"  Vidéo générée   : {video_path}\n"
+                f"  Type            : {video_type}\n"
                 f"{sep}"
             )
             log("info", "main", f"[DRY RUN] Caption :\n{caption}")
