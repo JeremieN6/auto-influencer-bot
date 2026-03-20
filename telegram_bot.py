@@ -409,7 +409,7 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             hashtag_icon = "🏷️" if item["hashtags"] else "🚫"
             lines.append(
                 f"*Step {item['step']}* — {item['eta']}\n"
-                f"  Format : `{item['format']}` | Type : {item['type']} | Hashtags : {hashtag_icon}\n"
+                f"  Format : `{item['format']}` \\| Type : {item['type']} \\| Hashtags : {hashtag_icon}\n"
                 f"  _{item['note']}_\n"
             )
         await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN_V2)
