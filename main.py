@@ -135,13 +135,15 @@ def run_pipeline(
             keyword_pool = _load_relevant_pool(category)
             log("info", "main", f"Mode relevant : {relevant} — {len(keyword_pool)} keywords chargés")
         local_path, public_url, filename, source_url, search_query = run_workflow(concept, keyword_pool=keyword_pool)
+        wildcard_used = None
     elif workflow == "pinterest_inpainting":
         from workflows.workflow_pinterest_inpainting import run as run_workflow  # type: ignore[assignment]
         local_path, public_url, filename = run_workflow(concept)
         source_url, search_query = None, None
+        wildcard_used = None
     elif workflow == "generatif":
         from workflows.workflow_generatif import run as run_workflow  # type: ignore[assignment]
-        local_path, public_url, filename = run_workflow(concept)
+        local_path, public_url, filename, wildcard_used = run_workflow(concept)
         source_url, search_query = None, None
 
     elif workflow in ("video_local", "video_pinterest"):
@@ -221,6 +223,7 @@ def run_pipeline(
         "step":           step,
         "last_prompt":    caption_prompt,
         "image_filename": filename,
+        "wildcard_used":  wildcard_used,
     }
 
     if dry_run:
@@ -243,7 +246,7 @@ def run_pipeline(
         save_pending_state(state)
         log("info", "main", "pending_state sauvegardé")
 
-        asyncio.run(send_for_validation(local_path, caption))
+        asyncio.run(send_for_validation(local_path, caption, wildcard_used=wildcard_used))
         log("info", "main", "Image envoyée sur Telegram — en attente de /validate")
 
     log_section("main", "PIPELINE TERMINÉ")

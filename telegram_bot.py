@@ -102,6 +102,7 @@ def _empty_state() -> dict:
         "step":           None,
         "last_prompt":    None,
         "image_filename": None,
+        "wildcard_used":  None,
         # —— état vidéo (V3) ——
         "media_type":       "image",   # "image" | "video"
         "video_path":       None,
@@ -115,7 +116,7 @@ def _empty_state() -> dict:
 # Fonction publique — appelée depuis main.py
 # ================================================================
 
-async def send_for_validation(image_path: str, caption: str) -> None:
+async def send_for_validation(image_path: str, caption: str, wildcard_used: str | None = None) -> None:
     """
     Envoie l'image générée + caption sur Telegram pour validation humaine.
     Sauvegarde l'état dans pending_state.json.
@@ -125,8 +126,14 @@ async def send_for_validation(image_path: str, caption: str) -> None:
     """
     logger.info(f"Envoi Telegram pour validation : {image_path}")
 
+    wildcard_line = (
+        f"🎲 *Élément surprise :* _{_escape_md(wildcard_used)}_\n"
+        if wildcard_used else ""
+    )
+
     text = (
         f"📸 *Nouveau post {_escape_md(INFLUENCER_NAME)}* — en attente de validation\n\n"
+        f"{wildcard_line}"
         f"*Caption :*\n{_escape_md(caption)}\n\n"
         f"──────────────────\n"
         f"✅ /validate — Publier sur Instagram\n"

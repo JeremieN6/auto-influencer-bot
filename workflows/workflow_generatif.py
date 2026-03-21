@@ -64,13 +64,14 @@ def run(concept: dict) -> tuple[str, str, str]:
 
     # ── Étape 2 : Génération image ────────────────────────────────
     log_step("workflow_generatif", 2, TOTAL_STEPS, "Génération image Gemini")
-    local_path, public_url, filename = generate_image_from_concept(concept, calendar_step)
+    local_path, public_url, filename, wildcard = generate_image_from_concept(concept, calendar_step)
 
     logger.info(f"Image finale : {local_path}")
     logger.info(f"URL publique : {public_url}")
+    logger.info(f"Wildcard     : {wildcard[:80]}...")
 
     log_section("workflow_generatif", "WORKFLOW GÉNÉRATIF TERMINÉ")
-    return local_path, public_url, filename
+    return local_path, public_url, filename, wildcard
 
     # ================================================================
     # TODO V2 — Implémentation à venir
