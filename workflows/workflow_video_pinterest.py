@@ -307,6 +307,19 @@ def run(concept: dict | None = None) -> tuple[str, str, str, str, str]:
     logger.info(f"Personnage détecté : {has_person}")
 
     if has_person:
+        # ── Vérification upper body (requis par Kling Motion Control) ───────
+        from pinterest_scraper import _detect_upper_body_visible
+        has_upper_body = _detect_upper_body_visible(frame_path)
+        logger.info(f"Upper body complet visible : {has_upper_body}")
+
+        if not has_upper_body:
+            logger.warning(
+                "Upper body non visible dans la vidéo source — "
+                "fallback branche story (évite rejet Kling : 'No complete upper body detected')"
+            )
+            has_person = False
+
+    if has_person:
         # ── Branche Personnage → Motion Control ─────────────────
         log_step(__name__, 4, TOTAL_STEPS, "Analyse scène + génération image Madison")
 

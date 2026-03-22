@@ -284,6 +284,48 @@ def _detect_person_in_image(image_path: str) -> bool:
         return False
 
 
+def _detect_upper_body_visible(image_path: str) -> bool:
+    """
+    Vérifie via Gemini Vision que le haut du corps est entièrement visible.
+
+    Requis par Kling Motion Control : il rejette les vidéos où les épaules,
+    le torse ou la taille ne sont pas visibles (erreur "No complete upper
+    body detected in the video").
+
+    Returns:
+        True  → upper body complet visible → Kling acceptera la vidéo
+        False → upper body coupé/absent   → fallback story (évite le rejet)
+    """
+    from google import genai
+    from google.genai import types
+    from prompts import PROMPT_UPPER_BODY_DETECTION
+    from PIL import Image
+    import io
+
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+
+        img = Image.open(image_path).copy()
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=95)
+        img_part = types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
+
+        response = client.models.generate_content(
+            model=GEMINI_MODEL_VISION,
+            contents=[PROMPT_UPPER_BODY_DETECTION, img_part],
+        )
+        answer = response.text.strip().upper()
+        logger.debug(f"Gemini détection upper body : '{answer}'")
+        return answer.startswith("YES")
+    except Exception as e:
+        logger.error(f"Erreur Gemini détection upper body : {e}")
+        # En cas d'erreur de détection, on refuse le Motion Control pour éviter
+        # un rejet Kling coûteux (crédits image Madison gaspillés)
+        return False
+
+
 def _cleanup_temp_image(path: str | None) -> None:
     """Supprime une image temporaire (rejet sans personnage)."""
     if path and os.path.exists(path):

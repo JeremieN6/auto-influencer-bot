@@ -164,6 +164,24 @@ Answer only with YES or NO. No explanation.
 """
 
 # ================================================================
+# PROMPT — Validation upper body (Kling Motion Control requirement)
+# Usage : workflow_video_pinterest.py — vérification avant appel Kling.
+# Kling rejette les vidéos où le haut du corps n'est pas entièrement visible.
+# ================================================================
+PROMPT_UPPER_BODY_DETECTION = """
+Does this image/video frame show a person whose COMPLETE UPPER BODY is clearly visible?
+
+Requirements:
+- Both shoulders must be visible
+- The torso (chest/abdomen area) must be visible, not cropped
+- The person must be visible from at least waist height upward
+- The upper body must NOT be cropped at the neck or chest level
+- A close-up of just the face or head does NOT count
+
+Answer only with YES or NO. No explanation.
+"""
+
+# ================================================================
 # PROMPT 5 — Génération JSON de scène depuis variables (workflow génératif V2)
 # Usage : workflow_generatif.py — Claude imagine la scène depuis les paramètres.
 # {parameters_injected_dynamically} est remplacé à l'appel.
