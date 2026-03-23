@@ -108,18 +108,33 @@
     "outdoor terrace white stone": "mediterranean girl aesthetic"
   },
 
-  "pinterest_video_tags": {
-    "bedroom mirror":              "video mirror selfie",
-    "beach at sunset":             "video beach aesthetic",
-    "cafe terrace Paris":          "video cafe aesthetic",
-    "poolside luxury":             "video pool aesthetic",
-    "rooftop city view":           "video rooftop night",
-    "bathroom vanity":             "video bathroom aesthetic",
-    "hotel room morning":          "video hotel room",
+  "pinterest_video_tags_reel": {
+    "bedroom mirror":              "video mirror selfie aesthetic",
+    "beach at sunset":             "video beach girl aesthetic",
+    "cafe terrace Paris":          "video cafe outfit girl",
+    "poolside luxury":             "video pool girl aesthetic",
+    "rooftop city view":           "video rooftop girl aesthetic",
+    "bathroom vanity":             "video bathroom selfie girl",
+    "hotel room morning":          "video hotel room girl",
+    "forest path golden hour":     "video golden hour girl",
+    "kitchen counter":             "video kitchen girl aesthetic",
+    "balcony with city skyline":   "video balcony girl",
+    "linen sofa living room":      "video cozy girl aesthetic",
+    "outdoor terrace white stone": "video terrace girl aesthetic"
+  },
+
+  "pinterest_video_tags_story": {
+    "bedroom mirror":              "video cozy room aesthetic",
+    "beach at sunset":             "video ocean waves aesthetic",
+    "cafe terrace Paris":          "video cafe ambiance aesthetic",
+    "poolside luxury":             "video pool water aesthetic",
+    "rooftop city view":           "video cityscape night aesthetic",
+    "bathroom vanity":             "video spa aesthetic",
+    "hotel room morning":          "video hotel view morning",
     "forest path golden hour":     "video golden hour nature",
-    "kitchen counter":             "video kitchen aesthetic",
-    "balcony with city skyline":   "video balcony city",
-    "linen sofa living room":      "video cozy room",
-    "outdoor terrace white stone": "video terrace aesthetic"
+    "kitchen counter":             "video kitchen morning aesthetic",
+    "balcony with city skyline":   "video city lights night",
+    "linen sofa living room":      "video cozy home aesthetic",
+    "outdoor terrace white stone": "video mediterranean sunset"
   }
 }

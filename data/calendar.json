@@ -5,29 +5,29 @@
       "format": "4:5",
       "type": "feed",
       "hashtags": true,
-      "note": "Post principal feed"
+      "note": "Post principal feed — workflow_pinterest image"
     },
     {
       "step": 2,
       "format": "9:16",
       "type": "story",
       "hashtags": false,
-      "note": "Story immersive"
+      "note": "Story immersive — workflow_video_pinterest (pool story)"
     },
     {
       "step": 3,
       "format": "4:5",
-      "type": "feed",
+      "type": "reel",
       "hashtags": true,
-      "note": "Post principal feed"
+      "note": "Reel feed — workflow_video_pinterest (pool reel)"
     },
     {
       "step": 4,
       "format": "9:16",
       "type": "story",
       "hashtags": false,
-      "note": "Story immersive"
+      "note": "Story immersive — workflow_video_pinterest (pool story)"
     }
   ],
-  "note": "Carrousel 1:1 en attente de validation manuelle avant intégration. TikTok publisher prévu en V2."
+  "note": "Carrousel 1:1 en attente. TikTok prévu V3."
 }

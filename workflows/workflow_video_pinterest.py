@@ -47,25 +47,29 @@ TOTAL_STEPS = 5
 # Scraping vidéo Pinterest
 # ================================================================
 
-def _build_video_query(variables: dict) -> str:
+def _build_video_query(variables: dict, pool_type: str = "reel") -> str:
     """
     Construit une requête Pinterest orientée vidéo.
 
-    Format : "video " + pinterest_video_tag (+ keyword person optionnel)
-    Total max ~5 mots.
+    Args:
+        pool_type : "reel" → pinterest_video_tags_reel (pool avec personnage)
+                    "story" → pinterest_video_tags_story (pool ambiance sans personnage)
+
+    Format : pool_tag (+ keyword person optionnel si pool reel)
     """
     from pinterest_scraper import _VIDEO_PERSON_KEYWORDS
 
-    video_tags = variables.get("pinterest_video_tags", {})
+    pool_key = "pinterest_video_tags_reel" if pool_type == "reel" else "pinterest_video_tags_story"
+    video_tags = variables.get(pool_key) or variables.get("pinterest_video_tags", {})
     if not video_tags:
-        raise ValueError("Clé 'pinterest_video_tags' absente dans variables.json")
+        raise ValueError(f"Clé '{pool_key}' absente dans variables.json")
 
     tag_values = list(video_tags.values())
     chosen_tag = random.choice(tag_values)
 
-    # Ajouter un keyword personnage dans 80% des cas pour maximiser les résultats avec personnage
+    # Pour le pool reel : ajouter un keyword personnage dans 80% des cas
     person_kw = ""
-    if random.random() < 0.8:
+    if pool_type == "reel" and random.random() < 0.8:
         person_kw = random.choice(_VIDEO_PERSON_KEYWORDS)
         # Déduplication
         tag_words    = set(chosen_tag.lower().split())
@@ -73,7 +77,7 @@ def _build_video_query(variables: dict) -> str:
         person_kw    = " ".join(person_words)
 
     query = f"{chosen_tag} {person_kw}".strip()
-    logger.info(f"Requête Pinterest vidéo : '{query}'")
+    logger.info(f"Requête Pinterest vidéo ({pool_type}) : '{query}'")
     return query
 
 
@@ -269,13 +273,18 @@ def _build_video_caption_prompt(scene_json: dict, step: dict, video_type: str) -
 # Point d'entrée
 # ================================================================
 
-def run(concept: dict | None = None) -> tuple[str, str, str, str, str]:
+def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str, str, str, str, str, str]:
     """
     Exécute le workflow vidéo Pinterest complet.
 
+    Args:
+        pool_type : "reel" → pinterest_video_tags_reel (pool avec personnage)
+                    "story" → pinterest_video_tags_story (pool ambiance POV)
+
     Returns:
-        (local_video_path, public_url, filename, caption, video_type)
-        - video_type : "reel" ou "story"
+        (local_video_path, public_url, filename, caption, video_type,
+         madison_image_path, source_video_path)
+        - video_type : "reel" ou "story" (peut différer de pool_type si fallback)
     """
     import asyncio
     import json as _json
@@ -291,7 +300,7 @@ def run(concept: dict | None = None) -> tuple[str, str, str, str, str]:
     with open(Path(__file__).parent.parent / "data" / "variables.json", encoding="utf-8") as f:
         variables = _json.load(f)
 
-    query      = _build_video_query(variables)
+    query      = _build_video_query(variables, pool_type=pool_type)
     video_path = asyncio.run(_scrape_pinterest_video(query))
     logger.info(f"Vidéo Pinterest récupérée : {video_path}")
 
@@ -321,6 +330,11 @@ def run(concept: dict | None = None) -> tuple[str, str, str, str, str]:
 
     if has_person:
         # ── Branche Personnage → Motion Control ─────────────────
+        if pool_type == "story":
+            logger.warning(
+                "Calendrier attendait story (ambiance), got reel (personnage détecté) — "
+                "adaptation destination : sera publié en reel"
+            )
         log_step(__name__, 4, TOTAL_STEPS, "Analyse scène + génération image Madison")
 
         scene_json = image_to_json(frame_path)
@@ -356,7 +370,12 @@ def run(concept: dict | None = None) -> tuple[str, str, str, str, str]:
         return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path
 
     else:
-        # ── Branche Ambiance → Story ─────────────────────────────
+        # ── Branche Ambiance → Story ─────────────────────────────────
+        if pool_type == "reel":
+            logger.warning(
+                "Calendrier attendait reel (personnage), got story (aucun personnage détecté) — "
+                "adaptation destination : sera publié en story"
+            )
         log_step(__name__, 4, TOTAL_STEPS, "Flux ambiance : vidéo brute")
         log_step(__name__, 5, TOTAL_STEPS, "Génération caption ambiance")
 

@@ -39,6 +39,32 @@ from logger import log, log_section, setup_logger
 from telegram_bot import save_pending_state, send_for_validation, send_video_for_validation
 
 
+def _has_local_videos() -> bool:
+    """Vérifie si /data/videos/ contient des fichiers .mp4."""
+    from video_batch_manager import has_local_videos
+    return has_local_videos()
+
+
+def _select_workflow(step: dict) -> str:
+    """
+    Sélectionne le workflow selon la disponibilité de vidéos locales et le calendrier.
+
+    Priorité :
+    1. Vidéos locales disponibles → "video_local" (toujours)
+    2. Step feed   → "pinterest" (image)
+    3. Step story  → "video_pinterest" (pool story)
+    4. Step reel   → "video_pinterest" (pool reel)
+    """
+    if _has_local_videos():
+        return "video_local"
+    step_type = step.get("type", "feed")
+    if step_type == "feed":
+        return "pinterest"
+    if step_type in ("story", "reel"):
+        return "video_pinterest"
+    return "pinterest"  # fallback sécurité
+
+
 def _load_relevant_pool(category: str | None = None) -> list[str]:
     """
     Charge le pool de keywords depuis relevant_keywords dans variables.json.
@@ -152,10 +178,20 @@ def run_pipeline(
 
         if workflow == "video_local":
             from workflows.workflow_video_local import run as run_video_workflow
+            video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept)
+
+            # Auto-refill : si /data/videos/ vide après traitement, transférer le prochain batch
+            from video_batch_manager import auto_refill_if_empty
+            refilled = auto_refill_if_empty()
+            if refilled:
+                log("info", "main", "Nouveau batch vidéo transféré dans /data/videos/")
+            elif not _has_local_videos():
+                log("info", "main", "Plus de vidéos locales — prochains runs via calendrier")
         else:
             from workflows.workflow_video_pinterest import run as run_video_workflow  # type: ignore[assignment]
-
-        video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept)
+            keyword_pool_type = step.get("type", "reel")  # "story" ou "reel"
+            log("info", "main", f"Pool keywords vidéo : {keyword_pool_type}")
+            video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept, pool_type=keyword_pool_type)
         log("info", "main", f"Vidéo générée : {video_path} | type={video_type}")
         log("info", "main", f"Caption : {caption[:100]}...")
 
@@ -270,9 +306,9 @@ Exemples :
     )
     parser.add_argument(
         "--workflow",
-        choices=["pinterest", "pinterest_inpainting", "generatif", "video_local", "video_pinterest"],
-        default="pinterest",
-        help="Workflow à utiliser (défaut : pinterest)",
+        choices=["pinterest", "pinterest_inpainting", "generatif", "video_local", "video_pinterest", "auto"],
+        default="auto",
+        help="Workflow à utiliser (défaut : auto — sélection selon vidéos locales + calendrier)",
     )
     parser.add_argument(
         "--dry-run",
@@ -329,9 +365,17 @@ if __name__ == "__main__":
             except Exception:
                 pass
 
+    # Résolution du workflow "auto"
+    selected_workflow = args.workflow
+    if selected_workflow == "auto":
+        from concept_generator import get_current_calendar_step
+        _step = get_current_calendar_step()
+        selected_workflow = _select_workflow(_step)
+        log("info", "main", f"Mode auto — workflow sélectionné : {selected_workflow} (step type={_step.get('type')})")
+
     try:
         run_pipeline(
-            workflow=args.workflow,
+            workflow=selected_workflow,
             override_params=override_params,
             dry_run=args.dry_run,
             relevant=args.relevant,
