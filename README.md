@@ -1,29 +1,53 @@
 # AI Influencer Automation
 
 Système d'automatisation Instagram pour une influenceuse IA.
-Pipeline complet : scraping Pinterest → génération image (Gemini) → caption (Claude) → validation Telegram → publication Instagram.
+Pipeline complet : scraping Pinterest → génération image (Gemini) → caption (Claude) → validation Telegram → publication Instagram/TikTok.
 
-**Stack** : Python 3.11 · Playwright · Gemini API · Claude API · Telegram Bot · Meta Graph API
+**Stack** : Python 3.11 · Playwright · Gemini API · Claude API · Kling AI · Telegram Bot · Meta Graph API
 
 ---
 
 ## Architecture rapide
 
 ```
-main.py                    ← Orchestrateur (cron)
-├── concept_generator.py   ← Tirage aléatoire + anti-répétition
+main.py                    ← Orchestrateur (cron) — routing auto
+├── concept_generator.py   ← Tirage aléatoire + anti-répétition + calendrier éditorial
+├── video_batch_manager.py ← Gestion des batches vidéo locaux (temp/ → data/videos/)
+├── frame_extractor.py     ← Extraction intelligente de frame (ffmpeg + Gemini Vision)
 ├── workflows/
-│   ├── workflow_pinterest.py             ← V1 — Pinterest → JSON → image (actif, défaut)
-│   ├── workflow_pinterest_inpainting.py  ← Inpainting — Pinterest → rembg → Gemini inpainting
+│   ├── workflow_video_local.py           ← Vidéos locales → Madison image → Kling Motion Control
+│   ├── workflow_video_pinterest.py       ← Vidéo scraping Pinterest → Kling
+│   ├── workflow_video_higgsfield.py      ← Génération vidéo via Higgsfield AI
+│   ├── workflow_pinterest.py             ← Pinterest → JSON → image Gemini
+│   ├── workflow_pinterest_inpainting.py  ← Pinterest → rembg → Gemini inpainting
 │   ├── workflow_generatif.py             ← V2 scaffold (non implémenté)
 │   └── workflow_backup.py                ← Manuel (dormant)
 ├── pinterest_scraper.py   ← Playwright
-├── image_generator.py     ← Gemini API (workflow JSON)
-├── inpainting.py          ← Gemini inpainting natif (workflow inpainting)
+├── image_generator.py     ← Gemini API (génération image + IMAGE_SAFETY resilience)
+├── kling_generator.py     ← Kling AI (Motion Control + génération vidéo)
+├── inpainting.py          ← Gemini inpainting natif
 ├── caption_generator.py   ← Claude API
 ├── instagram_publisher.py ← Meta Graph API
+├── tiktok_publisher.py    ← TikTok API
 └── telegram_bot.py        ← Bot Telegram (systemd)
 ```
+
+### Routing automatique (`--workflow auto`, défaut)
+
+`main.py` sélectionne le workflow à l'exécution selon ces priorités :
+
+1. **Vidéos locales disponibles** (`data/videos/*.mp4`) → `video_local` (toujours prioritaire)
+2. **Step calendrier = feed** → `pinterest` (image fixe)
+3. **Step calendrier = story ou reel** → `video_pinterest`
+
+Le calendrier éditorial tourne sur un cycle de 4 posts :
+
+| Step | Format | Type | Hashtags |
+|------|--------|------|----------|
+| 1 | 4:5 | feed | ✅ |
+| 2 | 9:16 | story | ❌ |
+| 3 | 4:5 | reel | ✅ |
+| 4 | 9:16 | story | ❌ |
 
 ---
 
@@ -243,17 +267,33 @@ crontab -l
 ## Test rapide
 
 ```bash
-# Test pipeline JSON (défaut)
+# Test routing automatique (défaut, sélectionne selon vidéos locales + calendrier)
 python main.py --dry-run
 
-# Pipeline Pinterest → JSON → image (workflow défaut)
-python main.py
+# Forcer un workflow spécifique
+python main.py --workflow video_local --dry-run
+python main.py --workflow video_pinterest --dry-run
+python main.py --workflow pinterest --dry-run
+python main.py --workflow pinterest_inpainting --dry-run
 
-# Pipeline Pinterest → inpainting direct Gemini
-python main.py --workflow pinterest_inpainting
+# Lancement production sans dry-run
+python main.py
 
 # Démarrer le bot Telegram manuellement (développement)
 python telegram_bot.py
+```
+
+### Gestion des batches vidéo
+
+Les vidéos locales sont stockées dans `temp/videos/` avec un préfixe de batch (`v2-`, `v3-`, etc.) avant d'être transférées dans `data/videos/` :
+
+```bash
+# Transférer des vidéos depuis votre machine vers le VPS
+scp "temp/videos/v2-*.mp4" root@VPS_IP:/opt/mybots/auto-influencer-bot/temp/videos/
+
+# Le batch est automatiquement transféré dans data/videos/ lors du premier run
+# ou manuellement :
+python -c "from video_batch_manager import auto_refill_if_empty; auto_refill_if_empty()"
 ```
 
 ---
@@ -292,7 +332,7 @@ C'est tout.
 
 ---
 
-## Commandes Telegram disponibles (V1)
+## Commandes Telegram disponibles
 
 | Commande | Description |
 |----------|-------------|
@@ -304,18 +344,28 @@ C'est tout.
 | `/schedule` | Calendrier des 4 prochains posts |
 | `/run` | *(V2 — scaffold, non implémenté)* |
 
+### Aperçu 24h avant publication
+
+Avant chaque publication programmée, le bot envoie automatiquement un aperçu avec 3 boutons inline :
+
+- **✅ Confirmer** — publier immédiatement
+- **✏️ Modifier** — régénérer avec instructions
+- **❌ Annuler** — annuler la publication
+
 ---
 
 ## Structure des fichiers de données
 
 | Fichier | Rôle | Commité |
 |---------|------|---------|
-| `data/variables.json` | BDD créative (locations, outfits, pinterest_tags...) | ✅ Oui |
-| `data/calendar.json` | Cycle éditorial (format, hashtags) | ✅ Oui |
+| `data/variables.json` | BDD créative (locations, outfits, pinterest_tags, pools vidéo...) | ✅ Oui |
+| `data/calendar.json` | Cycle éditorial 4 steps (feed/story/reel) | ✅ Oui |
 | `data/history.json` | Historique des posts (anti-répétition) | ❌ Non (runtime) |
 | `data/pending_state.json` | État partagé entre main.py et bot | ❌ Non (runtime) |
+| `data/videos/*.mp4` | Vidéos locales prêtes à l'emploi | ❌ Non (contenu) |
 | `data/ref_*_face.jpg` | Référence visage influenceuse | ❌ Non (propriétaire) |
 | `data/ref_*_body.jpg` | Référence corps influenceuse | ❌ Non (propriétaire) |
+| `temp/videos/` | Dépôt des batches vidéo entrants (préfixes v2-, v3-...) | ❌ Non (contenu) |
 
 ---
 
@@ -342,9 +392,17 @@ sudo journalctl -u influencer-telegram -f --no-pager
 | Workflow inpainting Gemini natif | V1 | ✅ Implémenté |
 | Bot Telegram V1 (validate, modify...) | V1 | ✅ Implémenté |
 | Script génération référence corps (Replicate FLUX.1-pro) | V1 | ✅ Implémenté |
-| Workflow Génératif (Claude → scène) | V2 | 🔜 À implémenter |
-| Commande /run (paramètres manuels) | V2 | 🔜 À implémenter |
-| Publication autonome sans /validate | V2 | 🔜 À implémenter (lorsque le process + rendu est validé) |
-| Carrousel 1:1 | V2 | 🔜 À valider manuellement |
-| Génération de vidéo avec Kling Motion Control | V3 | 🔜 À implémenter |
-| TikTok publisher | V3 | 📋 Prévu |
+| Routing automatique (`--workflow auto`) | V2 | ✅ Implémenté (2026-03-18) |
+| Calendrier éditorial 4 steps (feed/story/reel) | V2 | ✅ Implémenté (2026-03-18) |
+| Workflow vidéo local (Kling Motion Control) | V2 | ✅ Implémenté (2026-03-18) |
+| Workflow vidéo Pinterest | V2 | ✅ Implémenté (2026-03-18) |
+| Workflow vidéo Higgsfield | V3 | 🔜 Prévu |
+| Deux pools keywords vidéo (reel/story) | V3 | ✅ Implémenté (2026-03-23) |
+| Gestion batches vidéo (`video_batch_manager.py`) | V3 | ✅ Implémenté (2026-03-23) |
+| Résilience IMAGE_SAFETY / IMAGE_OTHER (retry 3 concepts + fallback sanitisé) | V3 | ✅ Implémenté (2026-03-23) |
+| Aperçu Telegram 24h avant publication (inline buttons) | V3 | ✅ Implémenté (2026-03-23) |
+| TikTok publisher | V1 | ✅ Implémenté |
+| Workflow Génératif (Claude → scène) | V2 |✅ Implémenté |
+| Commande /run (paramètres manuels, ConversationHandler 7 étapes) | V3 | ✅ Implémenté (2026-03-28) |
+| Publication autonome sans /validate | V4 | 🔜 À implémenter (lorsque le process + rendu est validé) |
+| Carrousel 1:1 | V4 | 🔜 À implémenter (lorsque j'aurai brainstormé le process) |
