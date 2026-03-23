@@ -116,7 +116,13 @@ def _empty_state() -> dict:
 # Fonction publique — appelée depuis main.py
 # ================================================================
 
-async def send_for_validation(image_path: str, caption: str, wildcard_used: str | None = None) -> None:
+async def send_for_validation(
+    image_path: str,
+    caption: str,
+    wildcard_used: str | None = None,
+    content_type: str = "feed",
+    destination: str = "instagram",
+) -> None:
     """
     Envoie l'image générée + caption sur Telegram pour validation humaine.
     Sauvegarde l'état dans pending_state.json.
@@ -126,6 +132,11 @@ async def send_for_validation(image_path: str, caption: str, wildcard_used: str 
     """
     logger.info(f"Envoi Telegram pour validation : {image_path}")
 
+    _TYPE_LABELS = {"feed": "🖼️ Feed", "story": "📱 Story", "reel": "🎬 Reel"}
+    _DEST_LABELS = {"instagram": "Instagram", "tiktok": "TikTok", "both": "Instagram \\+ TikTok"}
+    type_label = _TYPE_LABELS.get(content_type, content_type)
+    dest_label = _DEST_LABELS.get(destination, _escape_md(destination))
+
     wildcard_line = (
         f"🎲 *Élément surprise :* _{_escape_md(wildcard_used)}_\n"
         if wildcard_used else ""
@@ -134,6 +145,7 @@ async def send_for_validation(image_path: str, caption: str, wildcard_used: str 
     text = (
         f"📸 *Nouveau post {_escape_md(INFLUENCER_NAME)}* — en attente de validation\n\n"
         f"{wildcard_line}"
+        f"🗂 Type : {type_label} \\| 📤 Destination : {dest_label}\n\n"
         f"*Caption :*\n{_escape_md(caption)}\n\n"
         f"──────────────────\n"
         f"✅ /validate — Publier sur Instagram\n"
@@ -168,6 +180,7 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
 
     if video_type == "reel":
         type_label = "Reel"
+        dest_label = "Instagram Reels / TikTok"
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("📸 Instagram Reels",  callback_data="pub_video_reel"),
@@ -180,6 +193,7 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
         ])
     else:  # story
         type_label = "Story"
+        dest_label = "Instagram"
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("✅ Publier Story Instagram", callback_data="pub_video_story"),
@@ -189,6 +203,7 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
 
     text = (
         f"🎬 *Nouveau {type_label} {_escape_md(INFLUENCER_NAME)}* \u2014 en attente de validation\n\n"
+        f"🗂 Type : 🎬 {type_label} \\| 📤 Destination : {_escape_md(dest_label)}\n\n"
         f"*Caption :*\n{_escape_md(caption)}"
     )
 
@@ -203,133 +218,6 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
             )
 
     logger.info("Message vidéo Telegram envoyé avec succès")
-
-
-async def send_publication_preview(
-    media_path: str,
-    caption: str,
-    media_type: str,
-    content_type: str,
-    destination: str,
-    scheduled_at: str,
-) -> None:
-    """
-    Envoie une prévisualisation 24h avant publication programmée.
-
-    Args:
-        media_path   : chemin local du média (image ou vidéo)
-        caption      : caption complète
-        media_type   : "image" | "video"
-        content_type : "feed" | "story" | "reel"
-        destination  : "instagram" | "tiktok" | "both"
-        scheduled_at : ISO datetime string (ex: "2026-03-24T09:00:00")
-    """
-    from datetime import datetime
-
-    try:
-        dt = datetime.fromisoformat(scheduled_at)
-        scheduled_str = dt.strftime("%d/%m/%Y à %Hh%M")
-    except Exception:
-        scheduled_str = scheduled_at
-
-    _DEST_LABELS = {
-        "instagram": "Instagram",
-        "tiktok":    "TikTok",
-        "both":      "Instagram \+ TikTok",
-    }
-    _TYPE_LABELS = {
-        "feed":  "🖼️ Feed",
-        "story": "📱 Story",
-        "reel":  "🎬 Reel",
-    }
-    dest_label = _DEST_LABELS.get(destination, _escape_md(destination))
-    type_label = _TYPE_LABELS.get(content_type, content_type)
-
-    text = (
-        f"⏰ *Publication dans 24h* — {_escape_md(INFLUENCER_NAME)}\n\n"
-        f"📅 Prévu le : *{_escape_md(scheduled_str)}*\n"
-        f"📤 Destination : {dest_label}\n"
-        f"🗂 Type : {type_label}\n\n"
-        f"*Caption :*\n{_escape_md(caption)}\n\n"
-        f"──────────────────\n"
-        f"Confirmez ou modifiez avant publication\\."
-    )
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Confirmer",  callback_data="preview_confirm"),
-            InlineKeyboardButton("✏️ Modifier",  callback_data="preview_modify"),
-            InlineKeyboardButton("❌ Annuler",   callback_data="preview_cancel"),
-        ]
-    ])
-
-    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
-        if media_type == "video":
-            with open(media_path, "rb") as vid:
-                await bot.send_video(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    video=vid,
-                    caption=text,
-                    reply_markup=keyboard,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                )
-        else:
-            with open(media_path, "rb") as photo:
-                await bot.send_photo(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    photo=photo,
-                    caption=text,
-                    reply_markup=keyboard,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                )
-
-    logger.info(f"Preview 24h envoyée — {content_type} → {destination} le {scheduled_str}")
-
-
-async def _handle_preview_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Gère les boutons ✅/✏️/❌ de la preview 24h avant publication.
-    """
-    query = update.callback_query
-    await query.answer()
-
-    if not _is_authorized(update):
-        return
-
-    action = query.data
-
-    if action == "preview_confirm":
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await query.message.reply_text(
-            "✅ Publication confirmée — elle sera envoyée à l'heure prévue\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        logger.info("Preview 24h : publication confirmée par l'utilisateur")
-
-    elif action == "preview_modify":
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await query.message.reply_text(
-            "✏️ Modification — utilisez /modify \\[instruction\\] pour régénérer la caption ou le contenu\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        logger.info("Preview 24h : modification demandée par l'utilisateur")
-
-    elif action == "preview_cancel":
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await query.message.reply_text(
-            "❌ Publication annulée — step calendrier repoussé au suivant\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        logger.info("Preview 24h : publication annulée par l'utilisateur")
 
 
 # ================================================================
@@ -949,14 +837,6 @@ def start_bot() -> None:
         CallbackQueryHandler(
             handle_pub_video,
             pattern="^(" + "|".join(_VIDEO_PUB_ACTIONS) + ")$",
-        )
-    )
-
-    # Callbacks preview 24h avant publication
-    app.add_handler(
-        CallbackQueryHandler(
-            _handle_preview_callback,
-            pattern="^preview_(confirm|modify|cancel)$",
         )
     )
 

@@ -328,7 +328,13 @@ def run_pipeline(
         save_pending_state(state)
         log("info", "main", "pending_state sauvegardé")
 
-        asyncio.run(send_for_validation(local_path, caption, wildcard_used=wildcard_used))
+        asyncio.run(send_for_validation(
+            local_path,
+            caption,
+            wildcard_used=wildcard_used,
+            content_type=step.get("type", "feed"),
+            destination="instagram",
+        ))
         log("info", "main", "Image envoyée sur Telegram — en attente de /validate")
 
     log_section("main", "PIPELINE TERMINÉ")
