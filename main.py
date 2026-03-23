@@ -153,24 +153,59 @@ def run_pipeline(
     # ── Étape 3 : Workflow image ─────────────────────────────────
     log("info", "main", f"=== Étape 3/4 : Workflow {workflow} ===")
 
-    if workflow == "pinterest":
-        from workflows.workflow_pinterest import run as run_workflow
-        keyword_pool = None
-        if relevant:
-            category = None if relevant == "all" else relevant
-            keyword_pool = _load_relevant_pool(category)
-            log("info", "main", f"Mode relevant : {relevant} — {len(keyword_pool)} keywords chargés")
-        local_path, public_url, filename, source_url, search_query = run_workflow(concept, keyword_pool=keyword_pool)
-        wildcard_used = None
-    elif workflow == "pinterest_inpainting":
-        from workflows.workflow_pinterest_inpainting import run as run_workflow  # type: ignore[assignment]
-        local_path, public_url, filename = run_workflow(concept)
-        source_url, search_query = None, None
-        wildcard_used = None
-    elif workflow == "generatif":
-        from workflows.workflow_generatif import run as run_workflow  # type: ignore[assignment]
-        local_path, public_url, filename, wildcard_used = run_workflow(concept)
-        source_url, search_query = None, None
+    if workflow in ("pinterest", "pinterest_inpainting", "generatif"):
+        from image_generator import ImageSafetyError, disable_safety_fallback, enable_safety_fallback
+
+        _MAX_SAFETY_CONCEPTS = 3   # 3 concepts différents avant fallback sanitisé
+        _safety_count        = 0
+        _use_safety_fallback = False
+
+        while True:
+            if _use_safety_fallback:
+                enable_safety_fallback()
+            try:
+                if workflow == "pinterest":
+                    from workflows.workflow_pinterest import run as run_workflow
+                    keyword_pool = None
+                    if relevant:
+                        category     = None if relevant == "all" else relevant
+                        keyword_pool = _load_relevant_pool(category)
+                        log("info", "main", f"Mode relevant : {relevant} — {len(keyword_pool)} keywords chargés")
+                    local_path, public_url, filename, source_url, search_query = run_workflow(concept, keyword_pool=keyword_pool)
+                    wildcard_used = None
+                elif workflow == "pinterest_inpainting":
+                    from workflows.workflow_pinterest_inpainting import run as run_workflow  # type: ignore[assignment]
+                    local_path, public_url, filename = run_workflow(concept)
+                    source_url, search_query = None, None
+                    wildcard_used = None
+                elif workflow == "generatif":
+                    from workflows.workflow_generatif import run as run_workflow  # type: ignore[assignment]
+                    local_path, public_url, filename, wildcard_used = run_workflow(concept)
+                    source_url, search_query = None, None
+                break  # succès — sortir de la boucle
+
+            except ImageSafetyError:
+                if _use_safety_fallback:
+                    # Fallback sanitisé activé mais Gemini bloque encore — abandon
+                    disable_safety_fallback()
+                    raise ValueError(
+                        "IMAGE_SAFETY persistant après 3 concepts différents + prompt sanitisé — "
+                        "abandon du run."
+                    )
+                _safety_count += 1
+                if _safety_count < _MAX_SAFETY_CONCEPTS:
+                    log("warning", "main",
+                        f"IMAGE_SAFETY — concept {_safety_count}/{_MAX_SAFETY_CONCEPTS} refusé "
+                        f"— nouveau concept...")
+                    concept = generate_concept(persist=False)
+                else:
+                    log("warning", "main",
+                        f"IMAGE_SAFETY — {_MAX_SAFETY_CONCEPTS} concepts refusés "
+                        f"— dernier essai avec prompt sanitisé...")
+                    _use_safety_fallback = True
+            finally:
+                if _use_safety_fallback:
+                    disable_safety_fallback()
 
     elif workflow in ("video_local", "video_pinterest"):
         # Workflows vidéo — la caption est générée DANS le workflow
@@ -178,7 +213,18 @@ def run_pipeline(
 
         if workflow == "video_local":
             from workflows.workflow_video_local import run as run_video_workflow
-            video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept)
+            from image_generator import ImageSafetyError as _ImgSafetyErr, enable_safety_fallback as _esf, disable_safety_fallback as _dsf
+            try:
+                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept)
+            except _ImgSafetyErr:
+                log("warning", "main", "IMAGE_SAFETY/OTHER sur video_local — activation fallback sanitisé")
+                _esf()
+                try:
+                    video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept)
+                except _ImgSafetyErr:
+                    raise ValueError("IMAGE_SAFETY/OTHER persistant sur video_local — abandon")
+                finally:
+                    _dsf()
 
             # Auto-refill : si /data/videos/ vide après traitement, transférer le prochain batch
             from video_batch_manager import auto_refill_if_empty

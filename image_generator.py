@@ -49,6 +49,11 @@ REF_IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".avif"]
 _client = genai.Client(api_key=GEMINI_API_KEY)
 
 
+class ImageSafetyError(ValueError):
+    """Levée quand Gemini refuse la génération pour IMAGE_SAFETY."""
+    pass
+
+
 # ================================================================
 # Helpers internes
 # ================================================================
@@ -135,6 +140,14 @@ def _save_image_from_response(response, filename: str) -> str:
     parts   = getattr(content, "parts", None) if content else None
 
     if not parts:
+        # Détecter IMAGE_SAFETY et IMAGE_OTHER — les deux sont des refus de génération
+        # qui bénéficient du même traitement (fallback prompt sanitisé)
+        finish_reason_str = str(finish_reason) if finish_reason else ""
+        if "IMAGE_SAFETY" in finish_reason_str or "IMAGE_OTHER" in finish_reason_str:
+            raise ImageSafetyError(
+                f"Gemini a bloqué la génération ({finish_reason_str}). "
+                f"Réponse complète : {response}"
+            )
         raise ValueError(
             f"Gemini n'a retourné aucune partie dans la réponse (finish_reason={finish_reason}). "
             "Le modèle a peut-être refusé de générer l'image (filtre de sécurité ou contenu). "
@@ -178,6 +191,63 @@ def _copy_to_nginx(local_path: str, filename: str) -> str:
 
 
 # ================================================================
+# Sanitisation du prompt (fallback IMAGE_SAFETY)
+# ================================================================
+
+_SAFETY_REPLACEMENTS = [
+    # Bloc corps explicite du PROMPT_JSON_TO_IMAGE
+    (
+        "CRITICAL — body proportions to reproduce exactly:\n"
+        "- Very large, full bust with visible cleavage, stretching the top garment\n"
+        "- Narrow defined waist, pronounced hourglass silhouette\n"
+        "- Wide hips and rounded glutes\n"
+        "These body proportions are NON-NEGOTIABLE and must be clearly visible in the final image.",
+        "Athletic, proportional feminine figure with natural curves."
+    ),
+    # Descriptions spécifiques dans les JSONs injectés
+    ("Extremely large, very full breasts causing cleavage",   "Natural proportional bust"),
+    ("very full breasts",                                      "natural bust"),
+    ("cleavage",                                               "neckline"),
+    ("NON-NEGOTIABLE",                                         "important"),
+    ("Voluptuous hourglass figure with significantly enlarged breasts", "Feminine hourglass figure"),
+    ("stretching the top garment",                             "fitting the top garment"),
+    ("visible cleavage",                                       "natural neckline"),
+    ("pronounced hourglass",                                   "hourglass"),
+    ("Wide hips and rounded glutes",                           "defined hips"),
+    ("Narrow defined waist, pronounced hourglass silhouette",  "defined waist, feminine silhouette"),
+]
+
+
+def _sanitize_prompt_for_safety(prompt: str) -> str:
+    """
+    Remplace les descriptions corporelles explicites par des équivalents neutres.
+    Utilisé comme fallback quand Gemini retourne IMAGE_SAFETY.
+    """
+    sanitized = prompt
+    for old, new in _SAFETY_REPLACEMENTS:
+        sanitized = sanitized.replace(old, new)
+    logger.info("Prompt sanitisé pour contournement IMAGE_SAFETY")
+    return sanitized
+
+
+# Activé par run_pipeline() après épuisement des retries de concepts (3 concepts refusés).
+# Quand True, generate_image() sanitise le prompt au lieu de relancer ImageSafetyError.
+_safety_fallback_enabled = False
+
+
+def enable_safety_fallback() -> None:
+    """Active le fallback prompt sanitisé — appelé par run_pipeline() en dernier recours."""
+    global _safety_fallback_enabled
+    _safety_fallback_enabled = True
+
+
+def disable_safety_fallback() -> None:
+    """Désactive le fallback — toujours appelé après la tentative de dernier recours."""
+    global _safety_fallback_enabled
+    _safety_fallback_enabled = False
+
+
+# ================================================================
 # Génération d'image (prompt + référence)
 # ================================================================
 
@@ -201,6 +271,8 @@ def generate_image(prompt_text: str, max_retries: int = 3) -> tuple[str, str]:
     logger.debug(f"Prompt (extrait) : {prompt_text[:200]}...")
 
     ref_part      = _load_ref_image_part()
+    current_prompt   = prompt_text
+    safety_sanitized = False
 
     last_error: Exception | None = None
     for attempt in range(1, max_retries + 1):
@@ -212,7 +284,7 @@ def generate_image(prompt_text: str, max_retries: int = 3) -> tuple[str, str]:
 
             response = _client.models.generate_content(
                 model=GEMINI_MODEL_IMAGE_PRO2,
-                contents=[prompt_text, ref_part],
+                contents=[current_prompt, ref_part],
                 config=types.GenerateContentConfig(
                     response_modalities=["IMAGE", "TEXT"],
                 ),
@@ -225,6 +297,18 @@ def generate_image(prompt_text: str, max_retries: int = 3) -> tuple[str, str]:
             public_url = _copy_to_nginx(local_path, filename)
             logger.info(f"Image générée : {local_path}")
             return local_path, public_url
+
+        except ImageSafetyError as e:
+            last_error = e
+            logger.warning(f"Tentative {attempt}/{max_retries} — IMAGE_SAFETY détecté")
+            if _safety_fallback_enabled and not safety_sanitized:
+                # Dernier recours activé par run_pipeline() : sanitiser et retenter
+                current_prompt   = _sanitize_prompt_for_safety(current_prompt)
+                safety_sanitized = True
+                logger.info("Prompt sanitisé (fallback dernier recours) — retry...")
+            else:
+                # Remonter l'exception — run_pipeline() va retenter avec un nouveau concept
+                raise
 
         except ValueError as e:
             last_error = e
