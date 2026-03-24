@@ -100,8 +100,68 @@ def _save_intermediate_state(
 # Helpers
 # ================================================================
 
+def _load_video_history() -> dict:
+    """
+    Charge l'historique des vidéos utilisées depuis video_history.json.
+
+    Structure :
+    {
+      "cycle": 1,
+      "used": [
+        {"name": "video_01.mp4", "selected_at": "2026-03-24T09:45:00"}
+      ]
+    }
+    """
+    from config import VIDEO_HISTORY_PATH
+    try:
+        with open(VIDEO_HISTORY_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        # Validation minimale
+        if "used" not in data:
+            data["used"] = []
+        if "cycle" not in data:
+            data["cycle"] = 1
+        return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"cycle": 1, "used": []}
+
+
+def _save_video_history(history: dict) -> None:
+    """Persiste l'historique dans video_history.json."""
+    from config import VIDEO_HISTORY_PATH
+    os.makedirs(os.path.dirname(VIDEO_HISTORY_PATH) or ".", exist_ok=True)
+    with open(VIDEO_HISTORY_PATH, "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2, ensure_ascii=False)
+
+
+def _mark_video_used(video_name: str) -> None:
+    """
+    Enregistre la vidéo dans l'historique comme utilisée.
+    Appelé juste avant le pipeline — même si Kling échoue, la vidéo
+    n'est plus repiochée (évite les boucles d'échec sur vidéo incompatible).
+    """
+    from datetime import datetime
+    history = _load_video_history()
+    history["used"].append({
+        "name":        video_name,
+        "selected_at": datetime.now().isoformat(timespec="seconds"),
+    })
+    _save_video_history(history)
+    logger.info(f"[video_history] '{video_name}' marquée comme utilisée (cycle {history['cycle']})")
+
+
 def _pick_random_video(videos_dir: str) -> str:
-    """Sélectionne aléatoirement une vidéo depuis le dossier donné."""
+    """
+    Sélectionne aléatoirement une vidéo non encore utilisée dans ce cycle.
+
+    Comportement :
+    - Charge video_history.json pour connaître les vidéos déjà utilisées
+    - Filtre le pool pour n'offrir que les vidéos encore vierges
+    - Si toutes les vidéos ont été utilisées → réinitialise l'historique
+      (nouveau cycle) et repart du pool complet   → rotation automatique,
+      aucune intervention manuelle requise
+    - Enregistre la vidéo choisie dans l'historique AVANT de lancer le pipeline
+    """
     vdir = Path(videos_dir)
 
     if not vdir.exists():
@@ -110,19 +170,43 @@ def _pick_random_video(videos_dir: str) -> str:
             "Créer le dossier et y déposer des vidéos (.mp4, .mov, .webm)."
         )
 
-    videos = [
+    all_videos = [
         f for f in vdir.iterdir()
         if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS
     ]
 
-    if not videos:
+    if not all_videos:
         raise FileNotFoundError(
             f"Aucune vidéo trouvée dans {videos_dir}. "
             "Y déposer des fichiers .mp4 / .mov / .webm pour tester le pipeline."
         )
 
-    chosen = random.choice(videos)
-    logger.info(f"Vidéo sélectionnée : {chosen.name}")
+    history  = _load_video_history()
+    used_set = {entry["name"] for entry in history.get("used", [])}
+
+    unused = [f for f in all_videos if f.name not in used_set]
+
+    if not unused:
+        # Toutes les vidéos ont été utilisées → nouveau cycle
+        new_cycle = history.get("cycle", 1) + 1
+        logger.info(
+            f"[video_history] Toutes les vidéos utilisées — "
+            f"réinitialisation (cycle {new_cycle}). "
+            f"{len(all_videos)} vidéos remises dans le pool."
+        )
+        history = {"cycle": new_cycle, "used": []}
+        _save_video_history(history)
+        unused = all_videos
+
+    chosen = random.choice(unused)
+    logger.info(
+        f"Vidéo sélectionnée : {chosen.name} "
+        f"({len(unused) - 1} restantes dans le cycle courant)"
+    )
+
+    # Marquer immédiatement comme utilisée (avant le pipeline)
+    _mark_video_used(chosen.name)
+
     return str(chosen)
 
 
