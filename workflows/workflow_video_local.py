@@ -46,8 +46,8 @@ from prompts import PROMPT_JSON_TO_IMAGE
 
 logger = get_logger(__name__)
 
-# Extensions vidéo acceptées
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".avi"}
+# Extensions vidéo acceptées par Kling (mp4 et mov uniquement)
+VIDEO_EXTENSIONS = {".mp4", ".mov"}
 TOTAL_STEPS      = 5
 
 

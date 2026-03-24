@@ -195,7 +195,14 @@ def _upload_video_to_fileio(video_path: str) -> str:
                 raise RuntimeError(f"tmpfiles.org refus : {data}")
 
             raw_url = data["data"]["url"]
-            dl_url  = raw_url.replace("http://tmpfiles.org/", "https://tmpfiles.org/dl/")
+            # Normaliser vers HTTPS et insérer /dl/ pour obtenir une URL de téléchargement direct
+            dl_url = (
+                raw_url
+                .replace("http://tmpfiles.org/", "https://tmpfiles.org/dl/")
+                .replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/")
+            )
+            # Éviter la double insertion de /dl/
+            dl_url = dl_url.replace("https://tmpfiles.org/dl/dl/", "https://tmpfiles.org/dl/")
             logger.info(f"Vidéo uploadée sur tmpfiles.org : {dl_url}")
             return dl_url
 
