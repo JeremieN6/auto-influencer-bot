@@ -487,3 +487,144 @@ def scrape_pinterest_image(
     local_path, source_url, search_query = asyncio.run(_scrape_async(concept, keyword_pool=keyword_pool))
     logger.info(f"=== Pinterest scraper terminé → {local_path} ===")
     return local_path, source_url, search_query
+
+
+# ================================================================
+# Extraction image depuis une épingle individuelle (URL unique)
+# ================================================================
+
+async def _scrape_pin_image_async(pin_url: str) -> str:
+    """
+    Extrait et télécharge l'image haute qualité depuis une URL d'épingle Pinterest.
+
+    Stratégies (par ordre) :
+      1. __PWS_DATA__ JSON embarqué — clé "736x" ou "originals"
+      2. Balise og:image
+      3. Première <img> pinimg du DOM
+
+    Returns:
+        str : chemin local vers l'image téléchargée dans outputs/
+    """
+    import json as _json
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            ua = random.choice(USER_AGENTS)
+            context = await browser.new_context(
+                user_agent=ua,
+                locale="fr-FR",
+                timezone_id="Europe/Paris",
+            )
+            page = await context.new_page()
+            logger.info(f"Navigation vers l'épingle : {pin_url}")
+            await page.goto(pin_url, wait_until="domcontentloaded", timeout=30_000)
+            _random_delay(1.5, 3.0)
+
+            image_url: str | None = None
+
+            # Méthode 1 : __PWS_DATA__ JSON
+            try:
+                pws_raw = await page.evaluate("""
+                    () => {
+                        const el = document.getElementById('__PWS_DATA__');
+                        return el ? el.textContent : null;
+                    }
+                """)
+                if pws_raw:
+                    def _find_image_in_obj(obj: object, depth: int = 0) -> str | None:
+                        if depth > 15:
+                            return None
+                        if isinstance(obj, dict):
+                            for size_key in ("736x", "originals", "474x"):
+                                val = obj.get(size_key)
+                                if isinstance(val, dict):
+                                    url = val.get("url", "")
+                                    if url and "pinimg.com" in url:
+                                        return url
+                            for v in obj.values():
+                                result = _find_image_in_obj(v, depth + 1)
+                                if result:
+                                    return result
+                        elif isinstance(obj, list):
+                            for item in obj:
+                                result = _find_image_in_obj(item, depth + 1)
+                                if result:
+                                    return result
+                        return None
+                    image_url = _find_image_in_obj(_json.loads(pws_raw))
+                    if image_url:
+                        logger.info(f"Image URL depuis __PWS_DATA__ : {image_url}")
+            except Exception as e:
+                logger.debug(f"__PWS_DATA__ parsing échoué : {e}")
+
+            # Méthode 2 : og:image
+            if not image_url:
+                try:
+                    og = await page.get_attribute('meta[property="og:image"]', "content")
+                    if og and "pinimg.com" in og:
+                        image_url = _upgrade_image_quality(og)
+                        logger.info(f"Image URL depuis og:image : {image_url}")
+                except Exception:
+                    pass
+
+            # Méthode 3 : première <img> pinimg dans le DOM
+            if not image_url:
+                try:
+                    dom_urls: list[str] = await page.evaluate("""
+                        () => Array.from(document.querySelectorAll('img[src*="pinimg.com"]'))
+                            .map(i => i.src)
+                            .filter(s => !s.includes('75x75') && !s.includes('30x30'))
+                    """)
+                    if dom_urls:
+                        image_url = _upgrade_image_quality(dom_urls[0])
+                        logger.info(f"Image URL depuis DOM : {image_url}")
+                except Exception:
+                    pass
+
+            await context.close()
+        finally:
+            await browser.close()
+
+    if not image_url:
+        raise ValueError(f"Aucune image trouvée sur l'épingle : {pin_url}")
+
+    # Téléchargement
+    filename = f"pin_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    dest     = os.path.join(OUTPUTS_DIR, filename)
+    os.makedirs(OUTPUTS_DIR, exist_ok=True)
+
+    resp = requests.get(
+        image_url, timeout=20,
+        headers={"User-Agent": random.choice(USER_AGENTS)},
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Téléchargement image pin échoué ({resp.status_code}) : {image_url}"
+        )
+
+    with open(dest, "wb") as f:
+        f.write(resp.content)
+
+    logger.info(f"Image pin téléchargée : {dest} ({len(resp.content) // 1024} KB)")
+    return dest
+
+
+def scrape_image_from_pin_url(pin_url: str) -> str:
+    """
+    Télécharge l'image depuis une URL d'épingle Pinterest individuelle.
+
+    Args:
+        pin_url : URL de l'épingle (ex: https://fr.pinterest.com/pin/123456789/)
+
+    Returns:
+        str : chemin local vers l'image téléchargée dans outputs/
+
+    Raises:
+        ValueError  : si aucune image n'est trouvée sur la page
+        RuntimeError: si le téléchargement échoue
+    """
+    logger.info(f"=== scrape_image_from_pin_url : {pin_url} ===")
+    local_path = asyncio.run(_scrape_pin_image_async(pin_url))
+    logger.info(f"=== Image pin extraite : {local_path} ===")
+    return local_path

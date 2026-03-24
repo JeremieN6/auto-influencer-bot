@@ -52,6 +52,51 @@ TOTAL_STEPS      = 5
 
 
 # ================================================================
+# État intermédiaire
+# ================================================================
+
+def _save_intermediate_state(
+    madison_image_path: str,
+    source_video_path: str,
+    scene_json: dict,
+    step: dict,
+) -> None:
+    """
+    Persiste l'état intermédiaire dans pending_state.json avant d'appeler Kling.
+
+    Si Kling échoue, /status détecte cet état et propose /retryKling.
+    Seule l'étape Kling sera relucée — l'image Madison n'est PAS regénérée.
+    """
+    import json as _json
+    from config import PENDING_STATE_PATH
+
+    state = {
+        "_intermediate":       True,
+        "media_type":          "video",
+        "madison_image_path":  madison_image_path,
+        "source_video_path":   source_video_path,
+        "scene_json":          scene_json,
+        "step":                step,
+        # Champs attendus par _empty_state (compatibilité)
+        "image_path":          None,
+        "public_url":          None,
+        "caption":             None,
+        "concept":             None,
+        "last_prompt":         None,
+        "image_filename":      None,
+        "wildcard_used":       None,
+        "video_path":          None,
+        "video_public_url":    None,
+        "video_filename":      None,
+        "video_type":          None,
+    }
+    os.makedirs(os.path.dirname(PENDING_STATE_PATH), exist_ok=True)
+    with open(PENDING_STATE_PATH, "w", encoding="utf-8") as f:
+        _json.dump(state, f, indent=2, ensure_ascii=False)
+    logger.info("[état intermédiaire] Madison OK, Kling en attente — saved to pending_state.json")
+
+
+# ================================================================
 # Helpers
 # ================================================================
 
@@ -225,6 +270,9 @@ def _run_person_branch(
     madison_image_path, _ = generate_image(prompt_text)
     logger.info(f"Image Madison générée : {madison_image_path}")
 
+    # Sauvegarder l'état intermédiaire avant Kling (recovery si erreur)
+    _save_intermediate_state(madison_image_path, video_path, scene_json, step)
+
     # ── Étape 5a/5 : Kling Motion Control ───────────────────────
     log_step(__name__, 5, TOTAL_STEPS, "Kling Motion Control")
 
@@ -244,7 +292,7 @@ def _run_person_branch(
     caption        = generate_caption(caption_prompt)
 
     logger.info(f"=== Workflow Vidéo Local terminé (reel) : {final_video_path} ===")
-    return final_video_path, public_url, filename, caption, "reel", madison_image_path, ""
+    return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path
 
 
 # ================================================================
@@ -272,3 +320,47 @@ def _run_ambiance_branch(
 
     logger.info(f"=== Workflow Vidéo Local terminé (story/ambiance) : {video_path} ===")
     return video_path, public_url, filename, caption, "story", "", ""
+
+
+# ================================================================
+# Point d'entrée manuel (depuis Telegram /manualGeneration ou --workflow manual_video)
+# ================================================================
+
+def run_from_path(source_path: str, concept: dict | None = None) -> tuple:
+    """
+    Workflow vidéo depuis un chemin de vidéo fourni manuellement.
+
+    Identique à run() mais avec une vidéo source spécifiée explicitement
+    (plutôt que piocher aléatoirement dans data/videos/).
+
+    Args:
+        source_path : chemin local vers la vidéo source
+        concept     : dict optionnel (pour contexte calendrier)
+
+    Returns:
+        (local_video_path, public_url, filename, caption, video_type, madison_image_path, source_video_path)
+
+    Raises:
+        FileNotFoundError : si source_path n'existe pas
+        ValueError        : si Gemini ou Kling échoue
+    """
+    if not os.path.exists(source_path):
+        raise FileNotFoundError(f"Vidéo source introuvable : {source_path}")
+
+    log_section(__name__, "WORKFLOW VIDÉO MANUEL (run_from_path)")
+    step = get_current_calendar_step()
+
+    log_step(__name__, 1, TOTAL_STEPS, f"Vidéo source : {source_path}")
+
+    log_step(__name__, 2, TOTAL_STEPS, "Extraction frame intelligente")
+    frame_path = extract_best_frame(source_path)
+
+    log_step(__name__, 3, TOTAL_STEPS, "Détection personnage (Gemini Vision)")
+    from pinterest_scraper import _detect_person_in_image
+    has_person = _detect_person_in_image(frame_path)
+    logger.info(f"Personnage détecté : {has_person}")
+
+    if has_person:
+        return _run_person_branch(source_path, frame_path, step)
+    else:
+        return _run_ambiance_branch(source_path, frame_path, step)

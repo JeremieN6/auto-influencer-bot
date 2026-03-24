@@ -33,6 +33,7 @@ Utilisé par : workflow_video_local.py, workflow_video_pinterest.py
 import base64
 import os
 import shutil
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -48,7 +49,7 @@ from config import (
     NGINX_OUTPUT_DIR,
     OUTPUTS_DIR,
 )
-from frame_extractor import _get_video_duration
+from frame_extractor import _get_ffmpeg_exe, _get_video_duration
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -62,6 +63,51 @@ _NGINX_DEFAULT_PLACEHOLDER = "ton-domaine.com"
 # Polling : attente que Kling ait fini de générer la vidéo
 POLL_INTERVAL_S = 10   # secondes entre chaque vérification
 POLL_MAX        = 72   # max 72 * 10s = 720s = 12 min
+
+# ================================================================
+# Conversion vidéo H.264
+# ================================================================
+
+def _ensure_h264_mp4(video_path: str) -> str:
+    """
+    Convertit la vidéo en H.264 MP4 pour garantir la compatibilité Kling.
+
+    L'erreur Kling code 1201 "Video format is invalid" survient avec des vidéos
+    HEVC/H.265 (fréquent sur iPhone/macOS) ou dans des conteneurs non-MP4.
+    Cette conversion force H.264 + AAC dans un container MP4 faststart.
+
+    Returns:
+        str : chemin de la vidéo convertie (ou chemin original si ffmpeg échoue)
+    """
+    path = Path(video_path)
+    output_path = str(Path(OUTPUTS_DIR) / (path.stem + "_h264.mp4"))
+
+    if os.path.exists(output_path):
+        logger.debug(f"Conversion H.264 déjà présente : {output_path}")
+        return output_path
+
+    try:
+        ffmpeg = _get_ffmpeg_exe()
+        cmd = [
+            ffmpeg, "-i", str(path),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-y", output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.warning(
+                f"Conversion H.264 échouée (code {result.returncode}) — "
+                f"utilisation vidéo originale. Stderr: {result.stderr[-200:]}"
+            )
+            return video_path
+        logger.info(f"Vidéo convertie H.264 : {output_path}")
+        return output_path
+    except Exception as e:
+        logger.warning(f"Conversion H.264 impossible : {e} — utilisation vidéo originale")
+        return video_path
+
 
 # Scènes → hints de mouvement pour le motion prompt
 _MOTION_HINTS = {
@@ -309,6 +355,9 @@ def generate_video_motion_control(
     logger.info(f"Character image : {character_image_path}")
     logger.info(f"Source video    : {source_video_path}")
     logger.info(f"Modèle          : {KLING_MODEL}")
+
+    # ── Conversion H.264 (prévient l'erreur Kling code 1201) ─────
+    source_video_path = _ensure_h264_mp4(source_video_path)
 
     # ── Préparer les fichiers selon le mode de transport ─────────
     if _nginx_is_configured():

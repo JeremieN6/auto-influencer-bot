@@ -276,6 +276,13 @@ python main.py --workflow video_pinterest --dry-run
 python main.py --workflow pinterest --dry-run
 python main.py --workflow pinterest_inpainting --dry-run
 
+# Workflows manuels (source imposée, hors cron)
+python main.py --workflow manual_image --override-params /tmp/params.json --no-persist
+python main.py --workflow manual_video --override-params /tmp/params.json --no-persist
+
+# Reprendre uniquement l'étape Kling (après échec)
+python main.py --resume-kling --override-params /tmp/kling_state.json
+
 # Lancement production sans dry-run
 python main.py
 
@@ -342,15 +349,44 @@ C'est tout.
 | `/modify [instruction]` | Régénérer l'image avec instruction |
 | `/generate` | Déclencher un nouveau concept aléatoire |
 | `/schedule` | Calendrier des 4 prochains posts |
-| `/run` | *(V2 — scaffold, non implémenté)* |
+| `/retryKling` | Relancer Kling si la dernière vidéo a échoué |
+| `/manualGeneration` | Générer depuis une image ou vidéo source donnée |
+| `/run` | Lancement manuel avancé (workflow + paramètres) |
 
-### Aperçu 24h avant publication
+### `/status` — 3 états possibles
 
-Avant chaque publication programmée, le bot envoie automatiquement un aperçu avec 3 boutons inline :
+| État affiché | Signification |
+|-------------|---------------|
+| ⚪ Aucun contenu en attente | Pipeline inactif |
+| ✅ Image / Vidéo en attente de validation | Contenu généré, prêt pour `/validate` |
+| ⚠️ Pipeline interrompu — Kling a échoué | Image Madison générée, Kling n'a pas fini → `/retryKling` |
 
-- **✅ Confirmer** — publier immédiatement
-- **✏️ Modifier** — régénérer avec instructions
-- **❌ Annuler** — annuler la publication
+### `/retryKling` — récupération après échec Kling
+
+Si le pipeline vidéo échoue lors de l'étape Kling :
+1. L'image de l'influenceuse et la vidéo source sont conservées dans `pending_state.json`
+2. `/retryKling` repart **directement depuis l'image déjà générée** — pas de régénération Gemini
+3. Seule l'étape Kling est relancée
+4. La vidéo finale est envoyée sur Telegram pour validation
+
+Si les fichiers ont disparu (redémarrage VPS), utiliser `/generate` ou `/manualGeneration`.
+
+### `/manualGeneration` — génération depuis une source donnée
+
+Permet de déclencher le pipeline depuis n'importe quelle source :
+
+**Mode image :**
+- Envoyer une photo en pièce jointe → pipeline image (backup workflow)
+- Coller une URL d'épingle Pinterest → scraping HD automatique + pipeline image
+
+**Mode vidéo :**
+- Envoyer une vidéo en pièce jointe (.mp4 / .mov) → pipeline complet :
+  1. Extraction du meilleur frame (Gemini Vision)
+  2. Génération de l'image influenceuse (Gemini)
+  3. Transfert de mouvement via Kling Motion Control
+  4. Envoi du résultat sur Telegram pour validation
+
+> Les runs `/manualGeneration` n'affectent pas `history.json` ni le cycle de calendrier éditorial.
 
 ---
 
@@ -404,5 +440,11 @@ sudo journalctl -u influencer-telegram -f --no-pager
 | TikTok publisher | V1 | ✅ Implémenté |
 | Workflow Génératif (Claude → scène) | V2 |✅ Implémenté |
 | Commande /run (paramètres manuels, ConversationHandler 7 étapes) | V3 | ✅ Implémenté (2026-03-28) |
-| Publication autonome sans /validate | V4 | 🔜 À implémenter (lorsque le process + rendu est validé) |
-| Carrousel 1:1 | V4 | 🔜 À implémenter (lorsque j'aurai brainstormé le process) |
+| Conversion H.264 automatique avant Kling (fix erreur 400 format invalide) | V3 | ✅ Implémenté (2026-03-24) |
+| État intermédiaire avant Kling (recovery si crash) | V3 | ✅ Implémenté (2026-03-24) |
+| `/retryKling` — reprise exacte sans régénération | V3 | ✅ Implémenté (2026-03-24) |
+| `/manualGeneration` — image/vidéo depuis source donnée | V3 | ✅ Implémenté (2026-03-24) |
+| Scraping image depuis URL d'épingle Pinterest individuelle | V3 | ✅ Implémenté (2026-03-24) |
+| `/status` aware de l'état intermédiaire Kling | V3 | ✅ Implémenté (2026-03-24) |
+| Publication autonome sans `/validate` | V4 | 🔜 À implémenter |
+| Carrousel 1:1 | V4 | 🔜 À implémenter |

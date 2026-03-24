@@ -109,6 +109,11 @@ def _empty_state() -> dict:
         "video_public_url": None,
         "video_filename":   None,
         "video_type":       None,      # "reel" | "story"
+        # —— état intermédiaire (Kling en attente/échoué) ——
+        "_intermediate":      False,
+        "madison_image_path": None,
+        "source_video_path":  None,
+        "scene_json":         None,
     }
 
 
@@ -249,6 +254,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"/modify \\[instruction\\] — Régénérer avec modification\n"
         f"/generate — Nouveau concept aléatoire\n"
         f"/schedule — Calendrier des 4 prochains posts\n"
+        f"/manualGeneration — Générer depuis une image ou vidéo source\n"
+        f"/retryKling — Relancer Kling si la dernière vidéo a échoué\n"
+        f"/run — Lancement manuel avancé\n"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -286,12 +294,30 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         next_str = "Aucun post enregistré — premier run à venir"
 
     has_pending = bool(state.get("image_path"))
-    caption_preview = _escape_md(str(state.get('caption', ''))[:80])
-    pending_str = (
-        f"✅ Image en attente de validation\n"
-        f"   Caption : {caption_preview}\.\.\."
-        if has_pending else "⚪ Aucune image en attente"
-    )
+
+    if state.get("_intermediate"):
+        madison_name = _escape_md(os.path.basename(state.get("madison_image_path") or "?"))
+        pending_str = (
+            f"\u26a0\ufe0f *Pipeline interrompu* \u2014 Kling a échoué\.\n"
+            f"   Image Madison générée : `{madison_name}`\n"
+            f"   \u2192 /retryKling pour relancer automatiquement\n"
+            f"   \u2192 /manualGeneration pour une nouvelle source"
+        )
+    elif state.get("video_path"):
+        vid_type = _escape_md(state.get("video_type") or "vidéo")
+        caption_preview = _escape_md(str(state.get('caption', ''))[:80])
+        pending_str = (
+            f"\u2705 Vidéo \({vid_type}\) en attente de validation\n"
+            f"   Caption : {caption_preview}\.\.\."
+        )
+    elif has_pending:
+        caption_preview = _escape_md(str(state.get('caption', ''))[:80])
+        pending_str = (
+            f"\u2705 Image en attente de validation\n"
+            f"   Caption : {caption_preview}\.\.\."
+        )
+    else:
+        pending_str = "\u26aa Aucun contenu en attente"
 
     text = (
         f"📊 *Status {_escape_md(INFLUENCER_NAME)}*\n\n"
@@ -387,14 +413,7 @@ async def cmd_modify(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Forcer un nouveau concept aléatoire — /generate"""
-    if not _is_authorized(update):
-        return
 
-    await update.message.reply_text(
-        "🔄 Déclenchement d'un nouveau concept aléatoire...\n"
-        "Le pipeline complet va tourner. Résultat dans quelques minutes."
-    )
 
     try:
         # Déclencher le pipeline en subprocess (séparation de process)
@@ -416,6 +435,52 @@ async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         logger.error(f"Erreur déclenchement pipeline : {e}")
         await _send_error(update, f"Impossible de déclencher le pipeline : {e}")
 
+async def cmd_retry_kling(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Relance l'étape Kling depuis l'état intermédiaire — /retryKling"""
+    if not _is_authorized(update):
+        return
+
+    state = load_pending_state()
+    if not state.get("_intermediate"):
+        await _send_error(update, "Aucun état intermédiaire détecté \u2014 pas de Kling \u00e0 relancer.")
+        return
+
+    madison_path = state.get("madison_image_path")
+    source_video = state.get("source_video_path")
+
+    if not madison_path or not os.path.exists(madison_path):
+        await _send_error(update, f"Image Madison introuvable : {madison_path or '(non défini)'}")
+        return
+    if not source_video or not os.path.exists(source_video):
+        await _send_error(update, f"Vidéo source introuvable : {source_video or '(non défini)'}")
+        return
+
+    import tempfile
+    params = {
+        "madison_image_path": madison_path,
+        "source_video_path":  source_video,
+        "scene_json":         state.get("scene_json") or {},
+        "step":               state.get("step"),
+    }
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as f:
+        json.dump(params, f, ensure_ascii=False)
+        params_path = f.name
+
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+    proc = subprocess.Popen(
+        [sys.executable, script_path, "--resume-kling", "--override-params", params_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    logger.info(f"/retryKling lancé — PID {proc.pid} | madison={madison_path}")
+    await update.message.reply_text(
+        f"\U0001f504 Retry Kling lancé \\(PID {_escape_md(str(proc.pid))}\\)\\. "
+        f"La vidéo sera envoyée ici dès qu'elle est prête\\. "
+        f"Temps estimé : 10\\-15 minutes\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
 
 async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Afficher le calendrier des 4 prochains posts — /schedule"""
@@ -703,6 +768,231 @@ def _build_run_handler() -> ConversationHandler:
 
 
 # ================================================================
+# Commande /manualGeneration — ConversationHandler
+# ================================================================
+
+(
+    MANUAL_TYPE,
+    MANUAL_IMAGE_SOURCE,
+    MANUAL_VIDEO_RECEIVE,
+) = range(3)
+
+
+async def cmd_manual_generation(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Point d'entrée /manualGeneration — demande le type de contenu."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("\U0001f5bc\ufe0f Image",  callback_data="manual_image"),
+        InlineKeyboardButton("\U0001f3ac Vidéo",        callback_data="manual_video"),
+    ]])
+    await update.message.reply_text(
+        "\U0001f3a8 *Génération manuelle*\n\nQuel type de contenu ?",
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return MANUAL_TYPE
+
+
+async def manual_choose_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Type choisi — orienter vers la bonne demande de source."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "manual_image":
+        await query.edit_message_text(
+            "\U0001f5bc\ufe0f *Génération image*\n\n"
+            "Envoyez la source :\n"
+            "\u2022 \U0001f4f7 Photo en pièce jointe\n"
+            "\u2022 \U0001f517 URL d'une épingle Pinterest\n\n"
+            "ou /cancel pour annuler",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        ctx.user_data["manual_media_type"] = "image"
+        return MANUAL_IMAGE_SOURCE
+
+    # manual_video
+    await query.edit_message_text(
+        "\U0001f3ac *Génération vidéo \\(Kling Motion Control\\)*\n\n"
+        "Envoyez la vidéo source en pièce jointe \\(\.mp4, \.mov\\)\n\n"
+        "\u26a0\ufe0f Pipeline automatique :\n"
+        "  1\\. Extraction du meilleur frame\n"
+        "  2\\. Génération de l'image influenceuse\n"
+        "  3\\. Transfert de mouvement via Kling\n\n"
+        "Temps estimé : 10\\-15 minutes\n\n"
+        "ou /cancel pour annuler",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    ctx.user_data["manual_media_type"] = "video"
+    return MANUAL_VIDEO_RECEIVE
+
+
+async def manual_receive_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit une photo uploadée et lance le pipeline image."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+
+    photo = update.message.photo[-1]   # taille max disponible
+    tg_file = await photo.get_file()
+
+    dest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "temp",
+        f"manual_image_{photo.file_unique_id}.jpg",
+    )
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    await tg_file.download_to_drive(dest)
+    logger.info(f"Image reçue via Telegram : {dest}")
+
+    await update.message.reply_text(
+        "\U0001f4e5 Image reçue \u2014 lancement du pipeline\.\.\.\n"
+        "Résultat dans 1\\-2 minutes\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    _launch_manual_pipeline(dest, "manual_image")
+    return ConversationHandler.END
+
+
+async def manual_receive_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit un texte \u2014 URL Pinterest ou chemin local."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+
+    text = update.message.text.strip()
+
+    if text.startswith("https://") or text.startswith("http://"):
+        if "pinterest" not in text.lower():
+            await _send_error(
+                update,
+                "URL non supportée\. Seules les URLs Pinterest sont acceptées \u2014 "
+                "ou envoyez directement une photo\.",
+            )
+            return MANUAL_IMAGE_SOURCE
+        await update.message.reply_text(
+            "\U0001f517 URL Pinterest détectée \u2014 téléchargement de l'image source\.\.\.\n"
+            "Résultat dans quelques minutes\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        _launch_manual_pipeline(text, "manual_image", is_url=True)
+    elif os.path.exists(text):
+        _launch_manual_pipeline(text, "manual_image")
+        await update.message.reply_text(
+            "\U0001f680 Pipeline lancé depuis chemin local\. Résultat dans quelques minutes\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+    else:
+        await _send_error(
+            update,
+            f"Source non reconnue : `{_escape_md(text[:100])}`\n"
+            "Envoyez une photo ou une URL Pinterest\.",
+        )
+        return MANUAL_IMAGE_SOURCE
+
+    return ConversationHandler.END
+
+
+async def manual_receive_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit une vidéo uploadée et lance le pipeline vidéo."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+
+    if update.message.video:
+        tg_file = await update.message.video.get_file()
+        ext = ".mp4"
+        unique_id = update.message.video.file_unique_id
+    elif update.message.document and (update.message.document.mime_type or "").startswith("video/"):
+        tg_file = await update.message.document.get_file()
+        raw_name = update.message.document.file_name or "video.mp4"
+        ext = os.path.splitext(raw_name)[1] or ".mp4"
+        unique_id = update.message.document.file_unique_id
+    else:
+        await _send_error(update, "Format non reconnu\. Envoyez un fichier \.mp4 ou \.mov\.")
+        return MANUAL_VIDEO_RECEIVE
+
+    dest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "temp",
+        f"manual_video_{unique_id}{ext}",
+    )
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    await tg_file.download_to_drive(dest)
+    logger.info(f"Vidéo reçue via Telegram : {dest}")
+
+    await update.message.reply_text(
+        "\U0001f4e5 Vidéo reçue \u2014 lancement du pipeline\.\.\.\n"
+        "\u23f3 Temps estimé : 10\\-15 minutes \\(Kling Motion Control\\)\.\n"
+        "La vidéo finale vous sera envoyée ici pour validation\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    _launch_manual_pipeline(dest, "manual_video")
+    return ConversationHandler.END
+
+
+def _launch_manual_pipeline(
+    source: str,
+    workflow: str,
+    is_url: bool = False,
+) -> None:
+    """
+    Lance main.py --workflow manual_image|manual_video avec la source donnée.
+    --no-persist : les runs manuels n'affectent pas history.json.
+    """
+    import tempfile
+
+    params = {"source_path": source, "is_url": is_url}
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as f:
+        json.dump(params, f, ensure_ascii=False)
+        params_path = f.name
+
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+    proc = subprocess.Popen(
+        [
+            sys.executable, script_path,
+            "--workflow", workflow,
+            "--override-params", params_path,
+            "--no-persist",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    logger.info(f"Pipeline manuel lancé \u2014 PID {proc.pid} | workflow={workflow} | source={source[:80]}")
+
+
+async def manual_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    ctx.user_data.clear()
+    await update.message.reply_text("\u274c /manualGeneration annulé.")
+    return ConversationHandler.END
+
+
+def _build_manual_gen_handler() -> ConversationHandler:
+    """ConversationHandler pour /manualGeneration."""
+    return ConversationHandler(
+        entry_points=[CommandHandler("manualGeneration", cmd_manual_generation)],
+        states={
+            MANUAL_TYPE: [
+                CallbackQueryHandler(manual_choose_type, pattern="^manual_(image|video)$"),
+            ],
+            MANUAL_IMAGE_SOURCE: [
+                MessageHandler(filters.PHOTO, manual_receive_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, manual_receive_url),
+            ],
+            MANUAL_VIDEO_RECEIVE: [
+                MessageHandler(filters.VIDEO, manual_receive_video),
+                MessageHandler(
+                    filters.Document.MimeType("video/mp4") |
+                    filters.Document.MimeType("video/quicktime") |
+                    filters.Document.MimeType("video/x-msvideo"),
+                    manual_receive_video,
+                ),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", manual_cancel)],
+        per_message=False,
+    )
+
+
+# ================================================================
 # Démarrage du service bot (point d'entrée systemd)
 # ================================================================
 
@@ -826,7 +1116,9 @@ def start_bot() -> None:
     app.add_handler(CommandHandler("modify",   cmd_modify))
     app.add_handler(CommandHandler("generate", cmd_generate))
     app.add_handler(CommandHandler("schedule", cmd_schedule))
+    app.add_handler(CommandHandler("retryKling", cmd_retry_kling))
     app.add_handler(_build_run_handler())
+    app.add_handler(_build_manual_gen_handler())
 
     # Callbacks publication vidéo (indépendants de la conversation /run)
     _VIDEO_PUB_ACTIONS = (

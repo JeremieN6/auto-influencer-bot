@@ -153,7 +153,7 @@ def run_pipeline(
     # ── Étape 3 : Workflow image ─────────────────────────────────
     log("info", "main", f"=== Étape 3/4 : Workflow {workflow} ===")
 
-    if workflow in ("pinterest", "pinterest_inpainting", "generatif"):
+    if workflow in ("pinterest", "pinterest_inpainting", "generatif", "manual_image"):
         from image_generator import ImageSafetyError, disable_safety_fallback, enable_safety_fallback
 
         _MAX_SAFETY_CONCEPTS = 3   # 3 concepts différents avant fallback sanitisé
@@ -182,6 +182,20 @@ def run_pipeline(
                     from workflows.workflow_generatif import run as run_workflow  # type: ignore[assignment]
                     local_path, public_url, filename, wildcard_used = run_workflow(concept)
                     source_url, search_query = None, None
+                elif workflow == "manual_image":
+                    source_path = (override_params or {}).get("source_path")
+                    is_url      = (override_params or {}).get("is_url", False)
+                    if not source_path:
+                        raise ValueError("manual_image requiert 'source_path' dans override_params")
+                    if is_url and "pinterest" in source_path.lower():
+                        from pinterest_scraper import scrape_image_from_pin_url
+                        log("info", "main", f"URL Pinterest — scraping image source : {source_path}")
+                        source_path = scrape_image_from_pin_url(source_path)
+                        log("info", "main", f"Image Pinterest téléchargée : {source_path}")
+                    from workflows.workflow_backup import run as run_backup
+                    local_path, public_url, filename = run_backup(source_path)
+                    source_url, search_query = None, None
+                    wildcard_used = None
                 break  # succès — sortir de la boucle
 
             except ImageSafetyError:
@@ -207,7 +221,7 @@ def run_pipeline(
                 if _use_safety_fallback:
                     disable_safety_fallback()
 
-    elif workflow in ("video_local", "video_pinterest"):
+    elif workflow in ("video_local", "video_pinterest", "manual_video"):
         # Workflows vidéo — la caption est générée DANS le workflow
         log("info", "main", f"=== Workflow vidéo : {workflow} ===")
 
@@ -238,16 +252,36 @@ def run_pipeline(
             keyword_pool_type = step.get("type", "reel")  # "story" ou "reel"
             log("info", "main", f"Pool keywords vidéo : {keyword_pool_type}")
             video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept, pool_type=keyword_pool_type)
+        if workflow == "manual_video":
+            source_path = (override_params or {}).get("source_path")
+            if not source_path:
+                raise ValueError("manual_video requiert 'source_path' dans override_params")
+            from workflows.workflow_video_local import run_from_path as _run_video_manual
+            from image_generator import ImageSafetyError as _ImgSafetyErr2, enable_safety_fallback as _esf2, disable_safety_fallback as _dsf2
+            try:
+                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = _run_video_manual(source_path, concept)
+            except _ImgSafetyErr2:
+                log("warning", "main", "IMAGE_SAFETY/OTHER sur manual_video — activation fallback sanitisé")
+                _esf2()
+                try:
+                    video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = _run_video_manual(source_path, concept)
+                except _ImgSafetyErr2:
+                    raise ValueError("IMAGE_SAFETY/OTHER persistant sur manual_video — abandon")
+                finally:
+                    _dsf2()
         log("info", "main", f"Vidéo générée : {video_path} | type={video_type}")
         log("info", "main", f"Caption : {caption[:100]}...")
 
         video_state = {
-            "media_type":       "video",
-            "video_path":       video_path,
-            "video_public_url": video_public_url,
-            "video_filename":   video_filename,
-            "caption":          caption,
-            "video_type":       video_type,
+            "media_type":         "video",
+            "video_path":         video_path,
+            "video_public_url":   video_public_url,
+            "video_filename":     video_filename,
+            "caption":            caption,
+            "video_type":         video_type,
+            "_intermediate":      False,
+            "madison_image_path": madison_image_path,
+            "source_video_path":  source_video_path,
             # Champs image — None pour les workflows vidéo
             "image_path":     None,
             "public_url":     None,
@@ -286,7 +320,7 @@ def run_pipeline(
         raise ValueError(
             f"Workflow inconnu : '{workflow}'. "
             "Valeurs acceptées : 'pinterest', 'pinterest_inpainting', 'generatif', "
-            "'video_local', 'video_pinterest'"
+            "'video_local', 'video_pinterest', 'manual_image', 'manual_video'"
         )
     log("info", "main", f"Image générée : {local_path}")
 
@@ -342,6 +376,83 @@ def run_pipeline(
 
 
 # ================================================================
+# Reprise depuis état intermédiaire (--resume-kling)
+# ================================================================
+
+def run_resume_kling(params: dict, dry_run: bool = False) -> dict:
+    """
+    Relance uniquement l'étape Kling depuis un état intermédiaire.
+
+    Utilisé par /retryKling quand le pipeline vidéo a échoué APRES la génération
+    de l'image Madison mais AVANT la fin de Kling.
+    L'image Madison n'est PAS regénérée — on repart exactement de là où c'était tombé.
+
+    Args:
+        params dict keys:
+            madison_image_path : chemin de l'image Madison générée
+            source_video_path  : chemin de la vidéo source originale
+            scene_json         : JSON de scène (motion prompt + caption)
+            step               : étape calendrier (caption)
+    """
+    from kling_generator import build_motion_prompt, generate_video_motion_control
+    from workflows.workflow_video_local import _build_video_caption_prompt, _expose_video_via_nginx
+
+    madison_image_path = params["madison_image_path"]
+    source_video_path  = params["source_video_path"]
+    scene_json         = params.get("scene_json") or {}
+    step               = params.get("step") or get_current_calendar_step()
+
+    if not os.path.exists(madison_image_path):
+        raise FileNotFoundError(f"Image Madison introuvable : {madison_image_path}")
+    if not os.path.exists(source_video_path):
+        raise FileNotFoundError(f"Vidéo source introuvable : {source_video_path}")
+
+    log_section("main", "RESUME KLING — reprise depuis état intermédiaire")
+    log("info", "main", f"Image Madison  : {madison_image_path}")
+    log("info", "main", f"Vidéo source   : {source_video_path}")
+
+    motion_prompt    = build_motion_prompt(scene_json)
+    final_video_path = generate_video_motion_control(
+        character_image_path=madison_image_path,
+        source_video_path=source_video_path,
+        motion_prompt=motion_prompt,
+    )
+
+    filename, public_url = _expose_video_via_nginx(final_video_path)
+
+    caption_prompt = _build_video_caption_prompt(scene_json, step, "reel")
+    caption        = generate_caption(caption_prompt)
+
+    video_state = {
+        "media_type":         "video",
+        "video_path":         final_video_path,
+        "video_public_url":   public_url,
+        "video_filename":     filename,
+        "caption":            caption,
+        "video_type":         "reel",
+        "_intermediate":      False,
+        "madison_image_path": madison_image_path,
+        "source_video_path":  source_video_path,
+        "image_path":         None,
+        "public_url":         None,
+        "image_filename":     None,
+        "concept":            None,
+        "step":               step,
+        "last_prompt":        None,
+    }
+
+    if dry_run:
+        log("info", "main", f"[DRY RUN] RESUME KLING terminé : {final_video_path}")
+    else:
+        save_pending_state(video_state)
+        asyncio.run(send_video_for_validation(final_video_path, caption, "reel"))
+        log("info", "main", "Vidéo envoyée sur Telegram — en attente de validation")
+
+    log_section("main", "RESUME KLING TERMINÉ")
+    return video_state
+
+
+# ================================================================
 # Point d'entrée CLI
 # ================================================================
 
@@ -358,7 +469,12 @@ Exemples :
     )
     parser.add_argument(
         "--workflow",
-        choices=["pinterest", "pinterest_inpainting", "generatif", "video_local", "video_pinterest", "auto"],
+        choices=[
+            "pinterest", "pinterest_inpainting", "generatif",
+            "video_local", "video_pinterest",
+            "manual_image", "manual_video",
+            "auto",
+        ],
         default="auto",
         help="Workflow à utiliser (défaut : auto — sélection selon vidéos locales + calendrier)",
     )
@@ -392,6 +508,12 @@ Exemples :
         default=False,
         help="Ne pas enregistrer dans history.json (utilisé par /run pour les runs manuels).",
     )
+    parser.add_argument(
+        "--resume-kling",
+        action="store_true",
+        default=False,
+        help="Reprendre depuis un état intermédiaire — relancer uniquement l'étape Kling.",
+    )
     return parser.parse_args()
 
 
@@ -399,23 +521,52 @@ if __name__ == "__main__":
     setup_logger()
     args = _parse_args()
 
-    # Charger les override_params depuis le fichier temp écrit par /run Telegram
+    # Charger les override_params depuis le fichier temp écrit par /run ou /retryKling
     override_params: dict | None = None
     if args.override_params:
         import json
         try:
             with open(args.override_params, encoding="utf-8") as f:
                 override_params = json.load(f)
-            log("info", "main", f"Override params chargés : {override_params}")
+            log("info", "main", f"Override params chargés : {list((override_params or {}).keys())}")
         except Exception as e:
             log("error", "main", f"Impossible de lire --override-params '{args.override_params}' : {e}")
         finally:
-            # Supprimer le fichier temp après lecture
             import os as _os
             try:
                 _os.remove(args.override_params)
             except Exception:
                 pass
+
+    # ── Mode reprise Kling (--resume-kling) ─────────────────────
+    if args.resume_kling:
+        if not override_params:
+            log("error", "main", "--resume-kling requiert --override-params PATH avec les données de reprise")
+            sys.exit(1)
+        try:
+            run_resume_kling(override_params, dry_run=args.dry_run)
+            sys.exit(0)
+        except KeyboardInterrupt:
+            sys.exit(0)
+        except Exception as e:
+            log("error", "main", f"Erreur reprise Kling : {e}")
+            try:
+                import asyncio as _asyncio
+                from telegram import Bot
+                from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+                async def _notify_kling_error() -> None:
+                    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+                        await bot.send_message(
+                            chat_id=TELEGRAM_CHAT_ID,
+                            text=f"🔴 *Erreur retry Kling*\n\n`{str(e)[:500]}`",
+                            parse_mode="MarkdownV2",
+                        )
+
+                _asyncio.run(_notify_kling_error())
+            except Exception:
+                pass
+            sys.exit(1)
 
     # Résolution du workflow "auto"
     selected_workflow = args.workflow
