@@ -787,9 +787,7 @@ async def run_manual_gen_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     logger.info(f"Image source (gen) reçue : {dest}")
     ctx.user_data.setdefault("run_override", {})["source_path"] = dest
     await update.message.reply_text(
-        "✅ Image source reçue\.
-
-"
+        "✅ Image source reçue\\.\n\n"
         "📝 *Décris maintenant la scène souhaitée :*\n"
         "_Exemple : Madison assise dans un café parisien, lumière dorée, manteau beige_\n\n"
         "ou /cancel pour annuler",
@@ -833,9 +831,7 @@ async def run_inpaint_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     logger.info(f"Image source (inpaint) reçue : {dest}")
     ctx.user_data.setdefault("run_override", {})["source_path"] = dest
     await update.message.reply_text(
-        "✅ Image source reçue\.
-
-"
+        "✅ Image source reçue\\.\n\n"
         "📝 *Prompt personnalisé ?* \\(optionnel\\)\n"
         "_Par défaut : l'influenceuse remplace le personnage en gardant décor \\+ lumière_\n\n"
         "Envoie ton prompt ou tape */skip* pour utiliser le prompt par défaut\.",
