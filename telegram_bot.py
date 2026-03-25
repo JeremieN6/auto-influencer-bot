@@ -887,7 +887,11 @@ async def _launch_run_pipeline(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
 
     cmd = [python_exe, script_path, "--workflow", workflow, "--override-params", params_path]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    from config import LOG_PATH as _LOG_PATH
+    _log_abs = os.path.join(os.path.dirname(os.path.abspath(__file__)), _LOG_PATH)
+    os.makedirs(os.path.dirname(_log_abs), exist_ok=True)
+    _logfile = open(_log_abs, "a", encoding="utf-8")
+    proc = subprocess.Popen(cmd, stdout=_logfile, stderr=_logfile)
     logger.info(f"/run pipeline lancé — PID {proc.pid} | workflow={workflow} | override={override_params}")
 
 
@@ -1096,6 +1100,10 @@ def _launch_manual_pipeline(
         params_path = f.name
 
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+    from config import LOG_PATH as _LOG_PATH
+    _log_abs = os.path.join(os.path.dirname(os.path.abspath(__file__)), _LOG_PATH)
+    os.makedirs(os.path.dirname(_log_abs), exist_ok=True)
+    _logfile = open(_log_abs, "a", encoding="utf-8")
     proc = subprocess.Popen(
         [
             sys.executable, script_path,
@@ -1103,8 +1111,8 @@ def _launch_manual_pipeline(
             "--override-params", params_path,
             "--no-persist",
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=_logfile,
+        stderr=_logfile,
     )
     logger.info(f"Pipeline manuel lancé \u2014 PID {proc.pid} | workflow={workflow} | source={source[:80]}")
 

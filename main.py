@@ -510,6 +510,7 @@ Exemples :
             "pinterest", "pinterest_inpainting", "generatif",
             "video_local", "video_pinterest",
             "manual_image", "manual_video",
+            "manual_gen", "manual_inpaint",
             "auto",
         ],
         default="auto",
