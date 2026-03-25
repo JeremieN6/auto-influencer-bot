@@ -999,7 +999,7 @@ async def manual_receive_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     logger.info(f"Image reçue via Telegram : {dest}")
 
     await update.message.reply_text(
-        "\U0001f4e5 Image reçue \u2014 lancement du pipeline\\.\\.\\.\.\n"
+        "\U0001f4e5 Image reçue \u2014 lancement du pipeline\\.\\.\\.\n"
         "Résultat dans 1\\-2 minutes\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
@@ -1018,12 +1018,12 @@ async def manual_receive_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         if "pinterest" not in text.lower():
             await _send_error(
                 update,
-                "URL non supportée\. Seules les URLs Pinterest sont acceptées \u2014 "
-                "ou envoyez directement une photo\.",
+                "URL non supportée\\. Seules les URLs Pinterest sont acceptées \u2014 "
+                "ou envoyez directement une photo\\.",
             )
             return MANUAL_IMAGE_SOURCE
         await update.message.reply_text(
-            "\U0001f517 URL Pinterest détectée \u2014 téléchargement de l'image source\\.\\.\\.\.\n"
+            "\U0001f517 URL Pinterest détectée \u2014 téléchargement de l'image source\\.\\.\\.\n"
             "Résultat dans quelques minutes\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
@@ -1038,7 +1038,7 @@ async def manual_receive_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         await _send_error(
             update,
             f"Source non reconnue : `{_escape_md(text[:100])}`\n"
-            "Envoyez une photo ou une URL Pinterest\.",
+            "Envoyez une photo ou une URL Pinterest\\.",
         )
         return MANUAL_IMAGE_SOURCE
 
@@ -1060,7 +1060,7 @@ async def manual_receive_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
         ext = os.path.splitext(raw_name)[1] or ".mp4"
         unique_id = update.message.document.file_unique_id
     else:
-        await _send_error(update, "Format non reconnu\. Envoyez un fichier \.mp4 ou \.mov\.")
+        await _send_error(update, "Format non reconnu\\. Envoyez un fichier \\.mp4 ou \\.mov\\.")
         return MANUAL_VIDEO_RECEIVE
 
     dest = os.path.join(
@@ -1072,9 +1072,9 @@ async def manual_receive_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     logger.info(f"Vidéo reçue via Telegram : {dest}")
 
     await update.message.reply_text(
-        "\U0001f4e5 Vidéo reçue \u2014 lancement du pipeline\.\.\.\n"
-        "\u23f3 Temps estimé : 10\\-15 minutes \\(Kling Motion Control\\)\.\n"
-        "La vidéo finale vous sera envoyée ici pour validation\.",
+        "\U0001f4e5 Vidéo reçue \u2014 lancement du pipeline\\.\\.\\.\n"
+        "\u23f3 Temps estimé : 10\\-15 minutes \\(Kling Motion Control\\)\\.\n"
+        "La vidéo finale vous sera envoyée ici pour validation\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
     _launch_manual_pipeline(dest, "manual_video")
@@ -1210,7 +1210,7 @@ async def handle_pub_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
             result = publish_reel(video_public_url, caption, video_filename)
             media_id = result.get("id", "?")
             await query.message.reply_text(
-                f"✅ *Reel publié sur Instagram\!*\nMedia ID : `{_escape_md(media_id)}`",
+                f"✅ *Reel publié sur Instagram\\!*\nMedia ID : `{_escape_md(media_id)}`",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
             logger.info(f"Reel Instagram publié — media_id={media_id}")
@@ -1223,7 +1223,7 @@ async def handle_pub_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
             from tiktok_publisher import publish_video
             publish_id = publish_video(video_path, caption)
             await query.message.reply_text(
-                f"✅ *Vidéo publiée sur TikTok\!*\nPublish ID : `{_escape_md(publish_id)}`",
+                f"✅ *Vidéo publiée sur TikTok\\!*\nPublish ID : `{_escape_md(publish_id)}`",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
             logger.info(f"Vidéo TikTok publiée — publish_id={publish_id}")
@@ -1237,7 +1237,7 @@ async def handle_pub_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
             result = publish_story_video(video_public_url, video_filename)
             media_id = result.get("id", "?")
             await query.message.reply_text(
-                f"✅ *Story publiée sur Instagram\!*\nMedia ID : `{_escape_md(media_id)}`",
+                f"✅ *Story publiée sur Instagram\\!*\nMedia ID : `{_escape_md(media_id)}`",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
             logger.info(f"Story Instagram publiée — media_id={media_id}")
