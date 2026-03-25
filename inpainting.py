@@ -224,7 +224,6 @@ def replace_person(
         contents=[source_part, mask_part, ref_face_part, ref_body_part, prompt],
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE", "TEXT"],
-            response_mime_type="image/jpeg",
         ),
     )
 
