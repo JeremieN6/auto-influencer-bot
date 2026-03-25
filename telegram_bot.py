@@ -298,7 +298,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if state.get("_intermediate"):
         madison_name = _escape_md(os.path.basename(state.get("madison_image_path") or "?"))
         pending_str = (
-            f"\u26a0\ufe0f *Pipeline interrompu* \u2014 Kling a échoué\.\n"
+            f"\u26a0\ufe0f *Pipeline interrompu* \u2014 Kling a échoué\\.\n"
             f"   Image Madison générée : `{madison_name}`\n"
             f"   \u2192 /retryKling pour relancer automatiquement\n"
             f"   \u2192 /manualGeneration pour une nouvelle source"
@@ -307,14 +307,14 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         vid_type = _escape_md(state.get("video_type") or "vidéo")
         caption_preview = _escape_md(str(state.get('caption', ''))[:80])
         pending_str = (
-            f"\u2705 Vidéo \({vid_type}\) en attente de validation\n"
-            f"   Caption : {caption_preview}\.\.\."
+            f"\u2705 Vidéo \\({vid_type}\\) en attente de validation\n"
+            f"   Caption : {caption_preview}\\.\\.\\."
         )
     elif has_pending:
         caption_preview = _escape_md(str(state.get('caption', ''))[:80])
         pending_str = (
             f"\u2705 Image en attente de validation\n"
-            f"   Caption : {caption_preview}\.\.\."
+            f"   Caption : {caption_preview}\\.\\.\\."
         )
     else:
         pending_str = "\u26aa Aucun contenu en attente"
@@ -591,14 +591,14 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     if workflow in _VIDEO_WORKFLOWS:
         if workflow == "video_higgsfield":
             await query.edit_message_text(
-                "🎬 *Workflow Higgsfield* — non implémenté \(V3 futur\)\.",
+                "🎬 *Workflow Higgsfield* — non implémenté \\(V3 futur\\)\\.",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
             return ConversationHandler.END
 
         await query.edit_message_text(
             f"✅ Workflow *{_escape_md(workflow)}* sélectionné\n\n"
-            "🎬 Pipeline vidéo lancé\. Résultat dans quelques minutes\.",
+            "🎬 Pipeline vidéo lancé\\. Résultat dans quelques minutes\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         await _launch_run_pipeline(ctx)
@@ -607,14 +607,14 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     # Workflows manuels directs (source + prompt) — pas de personnalisation mood/location
     if workflow == "manual_gen":
         await query.edit_message_text(
-            "🎨 *Génération \(prompt \+ source\)*\n\n"
+            "🎨 *Génération \\(prompt \\+ source\\)*\n\n"
             "*Comment ça marche :*\n"
-            "📄 Tu envoies une image source \(décor, ambiance\)\n"
+            "📄 Tu envoies une image source \\(décor, ambiance\\)\n"
             "📝 Tu décris la scène souhaitée\n"
             "Gemini génère une *nouvelle image* avec l'influenceuse en s'inspirant de la source\n\n"
             "⚠️ Le fond n'est pas conservé — pour remplacer une personne, utilise Inpainting\n\n"
             "──────────────────\n\n"
-            "📎 Envoie maintenant l'image source \(photo en pièce jointe\)\n"
+            "📎 Envoie maintenant l'image source \\(photo en pièce jointe\\)\n"
             "ou /cancel pour annuler",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
@@ -627,14 +627,14 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
             f"\n  • `ref_body` : {'OK' if os.path.exists(_rbody) else '❌ MANQUANT'}"
         )
         await query.edit_message_text(
-            "✂️ *Inpainting \(remplacer personnage\)*\n\n"
+            "✂️ *Inpainting \\(remplacer personnage\\)*\n\n"
             "*Comment ça marche :*\n"
             "📄 Tu envoies une photo avec une personne\n"
             "rembg détecte et masque la personne automatiquement\n"
             "Gemini remplace en *préservant le décor, la lumière et la composition*\n\n"
             f"*Références influenceuse :*\n{refs_status}\n\n"
             "──────────────────\n\n"
-            "📎 Envoie maintenant l'image source \(photo avec un personnage à remplacer\)\n"
+            "📎 Envoie maintenant l'image source \\(photo avec un personnage à remplacer\\)\n"
             "ou /cancel pour annuler",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
@@ -658,7 +658,7 @@ async def run_choose_mode(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     if query.data == "aléatoire":
         await query.edit_message_text(
             f"✅ Workflow *{ctx.user_data['run_workflow']}* — mode aléatoire\n\n"
-            "🚀 Pipeline lancé\. Résultat dans quelques minutes\."  ,
+            "🚀 Pipeline lancé\\. Résultat dans quelques minutes\\."  ,
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         await _launch_run_pipeline(ctx)
@@ -751,7 +751,7 @@ async def run_choose_lighting(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         f"😊 Mood      : {override['mood']}\n"
         f"🧍 Pose      : {override['pose']}\n"
         f"💡 Lumière   : {override['lighting']}\n\n"
-        "🚀 Pipeline lancé\. Résultat dans quelques minutes\."
+        "🚀 Pipeline lancé\\. Résultat dans quelques minutes\\."
     )
     await query.edit_message_text(summary, parse_mode=ParseMode.MARKDOWN_V2)
     await _launch_run_pipeline(ctx)
@@ -806,7 +806,7 @@ async def run_manual_gen_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(
         f"✅ *Lancement génération*\n\n"
         f"🎨 Prompt : _{_escape_md(prompt[:150])}_\n\n"
-        "🚀 Pipeline lancé\. Résultat dans 1\\-2 minutes\.",
+        "🚀 Pipeline lancé\\. Résultat dans 1\\-2 minutes\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
     await _launch_run_pipeline(ctx)
@@ -834,7 +834,7 @@ async def run_inpaint_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         "✅ Image source reçue\\.\n\n"
         "📝 *Prompt personnalisé ?* \\(optionnel\\)\n"
         "_Par défaut : l'influenceuse remplace le personnage en gardant décor \\+ lumière_\n\n"
-        "Envoie ton prompt ou tape */skip* pour utiliser le prompt par défaut\.",
+        "Envoie ton prompt ou tape */skip* pour utiliser le prompt par défaut\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
     return RUN_INPAINT_PROMPT
@@ -856,7 +856,7 @@ async def run_inpaint_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(
         f"✅ *Lancement inpainting*\n\n"
         f"{prompt_line}\n\n"
-        "🚀 Pipeline lancé\. Résultat dans 1\\-2 minutes\.",
+        "🚀 Pipeline lancé\\. Résultat dans 1\\-2 minutes\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
     await _launch_run_pipeline(ctx)
@@ -969,7 +969,7 @@ async def manual_choose_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     # manual_video
     await query.edit_message_text(
         "\U0001f3ac *Génération vidéo \\(Kling Motion Control\\)*\n\n"
-        "Envoyez la vidéo source en pièce jointe \\(\.mp4, \.mov\\)\n\n"
+        "Envoyez la vidéo source en pièce jointe \\(\\.mp4, \\.mov\\)\n\n"
         "\u26a0\ufe0f Pipeline automatique :\n"
         "  1\\. Extraction du meilleur frame\n"
         "  2\\. Génération de l'image influenceuse\n"
@@ -999,8 +999,8 @@ async def manual_receive_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     logger.info(f"Image reçue via Telegram : {dest}")
 
     await update.message.reply_text(
-        "\U0001f4e5 Image reçue \u2014 lancement du pipeline\.\.\.\n"
-        "Résultat dans 1\\-2 minutes\.",
+        "\U0001f4e5 Image reçue \u2014 lancement du pipeline\\.\\.\\.\.\n"
+        "Résultat dans 1\\-2 minutes\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
     _launch_manual_pipeline(dest, "manual_image")
@@ -1023,15 +1023,15 @@ async def manual_receive_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
             )
             return MANUAL_IMAGE_SOURCE
         await update.message.reply_text(
-            "\U0001f517 URL Pinterest détectée \u2014 téléchargement de l'image source\.\.\.\n"
-            "Résultat dans quelques minutes\.",
+            "\U0001f517 URL Pinterest détectée \u2014 téléchargement de l'image source\\.\\.\\.\.\n"
+            "Résultat dans quelques minutes\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         _launch_manual_pipeline(text, "manual_image", is_url=True)
     elif os.path.exists(text):
         _launch_manual_pipeline(text, "manual_image")
         await update.message.reply_text(
-            "\U0001f680 Pipeline lancé depuis chemin local\. Résultat dans quelques minutes\.",
+            "\U0001f680 Pipeline lancé depuis chemin local\\. Résultat dans quelques minutes\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
     else:
