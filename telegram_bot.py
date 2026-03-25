@@ -558,8 +558,8 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             InlineKeyboardButton("✂️ Inpainting (remplacer perso)", callback_data="manual_inpaint"),
         ],
         [
-            InlineKeyboardButton("🏚️ Vidéo Local",      callback_data="video_local"),
-            InlineKeyboardButton("🎬 Vidéo Pinterest",  callback_data="video_pinterest"),
+            InlineKeyboardButton("🎬🏚️ Vidéo Local",      callback_data="video_local"),
+            InlineKeyboardButton("🎬📍 Vidéo Pinterest",  callback_data="video_pinterest"),
         ],
         [
             InlineKeyboardButton("🎬 Higgsfield (bientôt)", callback_data="video_higgsfield"),
@@ -613,7 +613,7 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
             "📝 Tu décris la scène souhaitée\n"
             "Gemini génère une *nouvelle image* avec l'influenceuse en s'inspirant de la source\n\n"
             "⚠️ Le fond n'est pas conservé — pour remplacer une personne, utilise Inpainting\n\n"
-            "---\n\n"
+            "──────────────────\n\n"
             "📎 Envoie maintenant l'image source \(photo en pièce jointe\)\n"
             "ou /cancel pour annuler",
             parse_mode=ParseMode.MARKDOWN_V2,
@@ -623,8 +623,8 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     if workflow == "manual_inpaint":
         from config import INFLUENCER_REF_FACE_PATH as _rface, INFLUENCER_REF_BODY_PATH as _rbody
         refs_status = (
-            f"  • `ref\_face` : {'OK' if os.path.exists(_rface) else '❌ MANQUANT'} "
-            f"\n  • `ref\_body` : {'OK' if os.path.exists(_rbody) else '❌ MANQUANT'}"
+            f"  • `ref_face` : {'OK' if os.path.exists(_rface) else '❌ MANQUANT'} "
+            f"\n  • `ref_body` : {'OK' if os.path.exists(_rbody) else '❌ MANQUANT'}"
         )
         await query.edit_message_text(
             "✂️ *Inpainting \(remplacer personnage\)*\n\n"
@@ -633,7 +633,7 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
             "rembg détecte et masque la personne automatiquement\n"
             "Gemini remplace en *préservant le décor, la lumière et la composition*\n\n"
             f"*Références influenceuse :*\n{refs_status}\n\n"
-            "---\n\n"
+            "──────────────────\n\n"
             "📎 Envoie maintenant l'image source \(photo avec un personnage à remplacer\)\n"
             "ou /cancel pour annuler",
             parse_mode=ParseMode.MARKDOWN_V2,
@@ -911,8 +911,9 @@ def _build_run_handler() -> ConversationHandler:
                 CommandHandler("skip", run_inpaint_prompt),
             ],
         },
-        fallbacks=[CommandHandler("cancel", run_cancel)],
+        fallbacks=[CommandHandler("cancel", run_cancel), CommandHandler("run", cmd_run)],
         per_message=False,
+        allow_reentry=True,
     )
 
 
@@ -1280,6 +1281,20 @@ def start_bot() -> None:
             pattern="^(" + "|".join(_VIDEO_PUB_ACTIONS) + ")$",
         )
     )
+
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Log et notifie l'utilisateur en cas d'erreur dans un handler."""
+        logger.error(f"Exception dans un handler : {context.error}", exc_info=context.error)
+        if isinstance(update, Update) and update.effective_chat:
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"❌ Erreur interne : {context.error}",
+                )
+            except Exception:
+                pass
+
+    app.add_error_handler(error_handler)
 
     logger.info("Handlers enregistrés — démarrage du polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
