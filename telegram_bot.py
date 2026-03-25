@@ -554,11 +554,11 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             InlineKeyboardButton("🖼️ Image Génératif", callback_data="generatif"),
         ],
         [
-            InlineKeyboardButton("� Générer (prompt + source)",    callback_data="manual_gen"),
+            InlineKeyboardButton("🪄 Générer (prompt + source)",    callback_data="manual_gen"),
             InlineKeyboardButton("✂️ Inpainting (remplacer perso)", callback_data="manual_inpaint"),
         ],
         [
-            InlineKeyboardButton("�🎬 Vidéo Local",      callback_data="video_local"),
+            InlineKeyboardButton("🏚️ Vidéo Local",      callback_data="video_local"),
             InlineKeyboardButton("🎬 Vidéo Pinterest",  callback_data="video_pinterest"),
         ],
         [
