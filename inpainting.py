@@ -174,6 +174,7 @@ def replace_person(
     influencer_name: str,
     ref_face_path: str,
     ref_body_path: str,
+    custom_prompt: str = "",
 ) -> tuple[str, str, str]:
     """
     Remplace le personnage d'une image par l'influenceuse via inpainting Gemini.
@@ -203,7 +204,11 @@ def replace_person(
 
     # ── Étape 2 : Préparation des parts Gemini ────────────────────
     logger.info("Étape 2/3 : Chargement des références et appel Gemini...")
-    prompt = INPAINTING_PROMPT_TEMPLATE.format(influencer_name=influencer_name)
+    prompt = (
+        custom_prompt.strip()
+        if custom_prompt.strip()
+        else INPAINTING_PROMPT_TEMPLATE.format(influencer_name=influencer_name)
+    )
 
     source_part   = _load_image_as_part(source_image_path)
     mask_part     = _mask_as_part(mask)

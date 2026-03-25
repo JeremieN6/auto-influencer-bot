@@ -320,6 +320,92 @@ def generate_image(prompt_text: str, max_retries: int = 3) -> tuple[str, str]:
     )
 
 
+def generate_image_from_source(
+    prompt_text: str,
+    source_image_path: str,
+    max_retries: int = 3,
+) -> tuple[str, str]:
+    """
+    Génère une image via Gemini en combinant prompt + image source (style) + référence influenceuse.
+
+    Contrairement à generate_image(), fournit une image source comme référence de décor/ambiance.
+    Gemini interprète l'image source comme contexte visuel et génère une nouvelle scène.
+
+    Args:
+        prompt_text       : prompt décrivant la scène souhaitée
+        source_image_path : chemin de l'image source (référence style/décor/ambiance)
+        max_retries       : nombre de tentatives
+
+    Returns:
+        (chemin_local, url_publique_nginx)
+
+    Raises:
+        FileNotFoundError : si l'image source ou la référence influenceuse est absente
+        ValueError        : si Gemini ne retourne pas d'image après toutes les tentatives
+    """
+    import time
+
+    logger.info(f"Génération image depuis source — modèle : {GEMINI_MODEL_IMAGE_PRO2}")
+    logger.info(f"Source          : {source_image_path}")
+    logger.debug(f"Prompt (extrait): {prompt_text[:200]}...")
+
+    if not os.path.exists(source_image_path):
+        raise FileNotFoundError(f"Image source introuvable : {source_image_path}")
+
+    # Charger l'image source comme référence de style/décor
+    src_img  = Image.open(source_image_path).copy()
+    src_data, src_mime = _pil_to_bytes(src_img)
+    src_part = types.Part.from_bytes(data=src_data, mime_type=src_mime)
+
+    # Charger la référence de l'influenceuse
+    ref_part = _load_ref_image_part()
+
+    current_prompt   = prompt_text
+    safety_sanitized = False
+    last_error: Exception | None = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                wait = random.uniform(3, 8)
+                logger.warning(f"Tentative {attempt}/{max_retries} — pause {wait:.1f}s avant retry...")
+                time.sleep(wait)
+
+            response = _client.models.generate_content(
+                model=GEMINI_MODEL_IMAGE_PRO2,
+                contents=[current_prompt, src_part, ref_part],
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],
+                ),
+            )
+            logger.debug("Réponse Gemini reçue — extraction image...")
+
+            filename   = f"pending_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            local_path = _save_image_from_response(response, filename)
+            public_url = _copy_to_nginx(local_path, filename)
+            logger.info(f"Image générée : {local_path}")
+            return local_path, public_url
+
+        except ImageSafetyError as e:
+            last_error = e
+            logger.warning(f"Tentative {attempt}/{max_retries} — IMAGE_SAFETY détecté")
+            if _safety_fallback_enabled and not safety_sanitized:
+                current_prompt   = _sanitize_prompt_for_safety(current_prompt)
+                safety_sanitized = True
+                logger.info("Prompt sanitisé (fallback dernier recours) — retry...")
+            else:
+                raise
+
+        except ValueError as e:
+            last_error = e
+            logger.error(f"Tentative {attempt}/{max_retries} échouée : {e}")
+
+    raise ValueError(
+        f"Gemini n'a pas retourné d'image après {max_retries} tentatives. "
+        f"Dernière erreur : {last_error}"
+    )
+
+
 # ================================================================
 # Image → JSON de scène (workflow Pinterest)
 # ================================================================

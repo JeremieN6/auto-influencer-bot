@@ -519,7 +519,11 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     RUN_MOOD,
     RUN_POSE,
     RUN_LIGHTING,
-) = range(7)
+    RUN_MANUAL_GEN_SOURCE,
+    RUN_MANUAL_GEN_PROMPT,
+    RUN_INPAINT_SOURCE,
+    RUN_INPAINT_PROMPT,
+) = range(11)
 
 
 def _load_variables() -> dict:
@@ -550,7 +554,11 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             InlineKeyboardButton("🖼️ Image Génératif", callback_data="generatif"),
         ],
         [
-            InlineKeyboardButton("🎬 Vidéo Local",      callback_data="video_local"),
+            InlineKeyboardButton("� Générer (prompt + source)",    callback_data="manual_gen"),
+            InlineKeyboardButton("✂️ Inpainting (remplacer perso)", callback_data="manual_inpaint"),
+        ],
+        [
+            InlineKeyboardButton("�🎬 Vidéo Local",      callback_data="video_local"),
             InlineKeyboardButton("🎬 Vidéo Pinterest",  callback_data="video_pinterest"),
         ],
         [
@@ -595,6 +603,42 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         )
         await _launch_run_pipeline(ctx)
         return ConversationHandler.END
+
+    # Workflows manuels directs (source + prompt) — pas de personnalisation mood/location
+    if workflow == "manual_gen":
+        await query.edit_message_text(
+            "🎨 *Génération \(prompt \+ source\)*\n\n"
+            "*Comment ça marche :*\n"
+            "📄 Tu envoies une image source \(décor, ambiance\)\n"
+            "📝 Tu décris la scène souhaitée\n"
+            "Gemini génère une *nouvelle image* avec l'influenceuse en s'inspirant de la source\n\n"
+            "⚠️ Le fond n'est pas conservé — pour remplacer une personne, utilise Inpainting\n\n"
+            "---\n\n"
+            "📎 Envoie maintenant l'image source \(photo en pièce jointe\)\n"
+            "ou /cancel pour annuler",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return RUN_MANUAL_GEN_SOURCE
+
+    if workflow == "manual_inpaint":
+        from config import INFLUENCER_REF_FACE_PATH as _rface, INFLUENCER_REF_BODY_PATH as _rbody
+        refs_status = (
+            f"  • `ref\_face` : {'OK' if os.path.exists(_rface) else '❌ MANQUANT'} "
+            f"\n  • `ref\_body` : {'OK' if os.path.exists(_rbody) else '❌ MANQUANT'}"
+        )
+        await query.edit_message_text(
+            "✂️ *Inpainting \(remplacer personnage\)*\n\n"
+            "*Comment ça marche :*\n"
+            "📄 Tu envoies une photo avec une personne\n"
+            "rembg détecte et masque la personne automatiquement\n"
+            "Gemini remplace en *préservant le décor, la lumière et la composition*\n\n"
+            f"*Références influenceuse :*\n{refs_status}\n\n"
+            "---\n\n"
+            "📎 Envoie maintenant l'image source \(photo avec un personnage à remplacer\)\n"
+            "ou /cancel pour annuler",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return RUN_INPAINT_SOURCE
 
     # Workflows image → proposer mode
     keyboard = _make_keyboard(["aléatoire", "manuel"], cols=2)
@@ -721,6 +765,108 @@ async def run_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+# ================================================================
+# Handlers /run — mode manuel gen \& inpaint
+# ================================================================
+
+async def run_manual_gen_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit la photo source pour le mode generate."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+    if not update.message.photo:
+        await _send_error(update, "Veuillez envoyer une photo en pièce jointe.")
+        return RUN_MANUAL_GEN_SOURCE
+    photo   = update.message.photo[-1]
+    tg_file = await photo.get_file()
+    dest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "temp",
+        f"run_gen_src_{photo.file_unique_id}.jpg",
+    )
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    await tg_file.download_to_drive(dest)
+    logger.info(f"Image source (gen) reçue : {dest}")
+    ctx.user_data.setdefault("run_override", {})["source_path"] = dest
+    await update.message.reply_text(
+        "✅ Image source reçue\.
+
+"
+        "📝 *Décris maintenant la scène souhaitée :*\n"
+        "_Exemple : Madison assise dans un café parisien, lumière dorée, manteau beige_\n\n"
+        "ou /cancel pour annuler",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_MANUAL_GEN_PROMPT
+
+
+async def run_manual_gen_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit le prompt et lance le pipeline manual_gen."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+    prompt = update.message.text.strip()
+    ctx.user_data.setdefault("run_override", {})["prompt"] = prompt
+    ctx.user_data["run_workflow"] = "manual_gen"
+    await update.message.reply_text(
+        f"✅ *Lancement génération*\n\n"
+        f"🎨 Prompt : _{_escape_md(prompt[:150])}_\n\n"
+        "🚀 Pipeline lancé\. Résultat dans 1\\-2 minutes\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    await _launch_run_pipeline(ctx)
+    return ConversationHandler.END
+
+
+async def run_inpaint_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit la photo source pour le mode inpaint."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+    if not update.message.photo:
+        await _send_error(update, "Veuillez envoyer une photo en pièce jointe.")
+        return RUN_INPAINT_SOURCE
+    photo   = update.message.photo[-1]
+    tg_file = await photo.get_file()
+    dest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "temp",
+        f"run_inpaint_src_{photo.file_unique_id}.jpg",
+    )
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    await tg_file.download_to_drive(dest)
+    logger.info(f"Image source (inpaint) reçue : {dest}")
+    ctx.user_data.setdefault("run_override", {})["source_path"] = dest
+    await update.message.reply_text(
+        "✅ Image source reçue\.
+
+"
+        "📝 *Prompt personnalisé ?* \\(optionnel\\)\n"
+        "_Par défaut : l'influenceuse remplace le personnage en gardant décor \\+ lumière_\n\n"
+        "Envoie ton prompt ou tape */skip* pour utiliser le prompt par défaut\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_INPAINT_PROMPT
+
+
+async def run_inpaint_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit le prompt optionnel et lance le pipeline manual_inpaint."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+    text = update.message.text.strip() if update.message.text else ""
+    is_skip = (text.lower() in ("/skip", "skip"))
+    ctx.user_data.setdefault("run_override", {})["prompt"] = "" if is_skip else text
+    ctx.user_data["run_workflow"] = "manual_inpaint"
+    prompt_line = (
+        "🎨 Prompt : _par défaut_"
+        if is_skip
+        else f"🎨 Prompt : _{_escape_md(text[:150])}_"
+    )
+    await update.message.reply_text(
+        f"✅ *Lancement inpainting*\n\n"
+        f"{prompt_line}\n\n"
+        "🚀 Pipeline lancé\. Résultat dans 1\\-2 minutes\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    await _launch_run_pipeline(ctx)
+    return ConversationHandler.END
+
+
 async def _launch_run_pipeline(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Lance le pipeline via subprocess en passant les override_params
@@ -754,13 +900,20 @@ def _build_run_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CommandHandler("run", cmd_run)],
         states={
-            RUN_WORKFLOW: [CallbackQueryHandler(run_choose_workflow)],
-            RUN_MODE:     [CallbackQueryHandler(run_choose_mode)],
-            RUN_LOCATION: [CallbackQueryHandler(run_choose_location)],
-            RUN_OUTFIT:   [CallbackQueryHandler(run_choose_outfit)],
-            RUN_MOOD:     [CallbackQueryHandler(run_choose_mood)],
-            RUN_POSE:     [CallbackQueryHandler(run_choose_pose)],
-            RUN_LIGHTING: [CallbackQueryHandler(run_choose_lighting)],
+            RUN_WORKFLOW:          [CallbackQueryHandler(run_choose_workflow)],
+            RUN_MODE:              [CallbackQueryHandler(run_choose_mode)],
+            RUN_LOCATION:          [CallbackQueryHandler(run_choose_location)],
+            RUN_OUTFIT:            [CallbackQueryHandler(run_choose_outfit)],
+            RUN_MOOD:              [CallbackQueryHandler(run_choose_mood)],
+            RUN_POSE:              [CallbackQueryHandler(run_choose_pose)],
+            RUN_LIGHTING:          [CallbackQueryHandler(run_choose_lighting)],
+            RUN_MANUAL_GEN_SOURCE: [MessageHandler(filters.PHOTO, run_manual_gen_source)],
+            RUN_MANUAL_GEN_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, run_manual_gen_prompt)],
+            RUN_INPAINT_SOURCE:    [MessageHandler(filters.PHOTO, run_inpaint_source)],
+            RUN_INPAINT_PROMPT:    [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, run_inpaint_prompt),
+                CommandHandler("skip", run_inpaint_prompt),
+            ],
         },
         fallbacks=[CommandHandler("cancel", run_cancel)],
         per_message=False,

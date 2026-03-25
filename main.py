@@ -153,7 +153,7 @@ def run_pipeline(
     # ── Étape 3 : Workflow image ─────────────────────────────────
     log("info", "main", f"=== Étape 3/4 : Workflow {workflow} ===")
 
-    if workflow in ("pinterest", "pinterest_inpainting", "generatif", "manual_image"):
+    if workflow in ("pinterest", "pinterest_inpainting", "generatif", "manual_image", "manual_gen", "manual_inpaint"):
         from image_generator import ImageSafetyError, disable_safety_fallback, enable_safety_fallback
 
         _MAX_SAFETY_CONCEPTS = 3   # 3 concepts différents avant fallback sanitisé
@@ -194,6 +194,42 @@ def run_pipeline(
                         log("info", "main", f"Image Pinterest téléchargée : {source_path}")
                     from workflows.workflow_backup import run as run_backup
                     local_path, public_url, filename = run_backup(source_path)
+                    source_url, search_query = None, None
+                    wildcard_used = None
+                elif workflow == "manual_gen":
+                    source_path = (override_params or {}).get("source_path")
+                    prompt_text = (override_params or {}).get("prompt")
+                    if not source_path:
+                        raise ValueError("manual_gen requiert 'source_path' dans override_params")
+                    if not prompt_text:
+                        raise ValueError("manual_gen requiert 'prompt' dans override_params")
+                    from image_generator import generate_image_from_source
+                    local_path, public_url = generate_image_from_source(prompt_text, source_path)
+                    filename = os.path.basename(local_path)
+                    source_url, search_query = None, None
+                    wildcard_used = None
+                elif workflow == "manual_inpaint":
+                    source_path   = (override_params or {}).get("source_path")
+                    custom_prompt = (override_params or {}).get("prompt", "")
+                    if not source_path:
+                        raise ValueError("manual_inpaint requiert 'source_path' dans override_params")
+                    from config import INFLUENCER_NAME as _INFL_NAME
+                    from config import INFLUENCER_REF_FACE_PATH as _REF_FACE
+                    from config import INFLUENCER_REF_BODY_PATH as _REF_BODY
+                    for _ref_path in [_REF_FACE, _REF_BODY]:
+                        if not os.path.exists(_ref_path):
+                            raise FileNotFoundError(
+                                f"❌ Référence manquante : {_ref_path}\n"
+                                f"   Génère-la avec scripts/generate_body_ref.py"
+                            )
+                    from inpainting import replace_person
+                    local_path, public_url, filename = replace_person(
+                        source_image_path=source_path,
+                        influencer_name=_INFL_NAME,
+                        ref_face_path=_REF_FACE,
+                        ref_body_path=_REF_BODY,
+                        custom_prompt=custom_prompt,
+                    )
                     source_url, search_query = None, None
                     wildcard_used = None
                 break  # succès — sortir de la boucle
@@ -320,7 +356,8 @@ def run_pipeline(
         raise ValueError(
             f"Workflow inconnu : '{workflow}'. "
             "Valeurs acceptées : 'pinterest', 'pinterest_inpainting', 'generatif', "
-            "'video_local', 'video_pinterest', 'manual_image', 'manual_video'"
+            "'video_local', 'video_pinterest', 'manual_image', 'manual_video', "
+            "'manual_gen', 'manual_inpaint'"
         )
     log("info", "main", f"Image générée : {local_path}")
 
