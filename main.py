@@ -352,12 +352,90 @@ def run_pipeline(
         log_section("main", "PIPELINE VIDÉO TERMINÉ")
         return video_state
 
+    elif workflow == "video_i2v":
+        # Image-to-Video : image influenceuse + prompt → Kling anime directement
+        log("info", "main", "=== Workflow vidéo : video_i2v (Image-to-Video) ===")
+        first_frame_path = (override_params or {}).get("source_path")
+        prompt_text      = (override_params or {}).get("prompt")
+        aspect_ratio     = (override_params or {}).get("aspect_ratio", "9:16")
+
+        if not first_frame_path:
+            raise ValueError("video_i2v requiert 'source_path' dans override_params")
+        if not prompt_text:
+            raise ValueError("video_i2v requiert 'prompt' dans override_params")
+
+        from kling_generator import generate_video_image2video as _gen_i2v
+        video_path = _gen_i2v(
+            first_frame_path=first_frame_path,
+            prompt=prompt_text,
+            aspect_ratio=aspect_ratio,
+        )
+        video_filename = os.path.basename(video_path)
+
+        # Exposer via nginx si configuré, sinon URL vide (sera gérée à la publication)
+        from config import NGINX_BASE_URL as _nginx_url
+        _nginx_placeholder = "ton-domaine.com"
+        if _nginx_placeholder not in _nginx_url:
+            from kling_generator import _expose_file_via_nginx as _expose
+            video_public_url = _expose(video_path)
+        else:
+            video_public_url = ""
+
+        # Caption via Claude
+        from caption_generator import generate_caption as _gen_caption
+        from concept_generator import build_caption_prompt as _build_prompt
+        caption_prompt = _build_prompt(concept)
+        caption = _gen_caption(caption_prompt)
+
+        video_type = "reel"  # i2v → format vertical par défaut
+        log("info", "main", f"Vidéo i2v générée : {video_path} | ratio={aspect_ratio}")
+        log("info", "main", f"Caption : {caption[:100]}...")
+
+        video_state = {
+            "media_type":         "video",
+            "video_path":         video_path,
+            "video_public_url":   video_public_url,
+            "video_filename":     video_filename,
+            "caption":            caption,
+            "video_type":         video_type,
+            "_intermediate":      False,
+            "madison_image_path": first_frame_path,
+            "source_video_path":  None,
+            "image_path":     None,
+            "public_url":     None,
+            "image_filename": None,
+            "concept":        concept,
+            "step":           step,
+            "last_prompt":    None,
+        }
+
+        if dry_run:
+            log("info", "main", "[DRY RUN] — Pas d'envoi Telegram, pas de sauvegarde historique")
+            log("info", "main",
+                f"\n{'═'*60}\n"
+                f"  DRY RUN — WORKFLOW VIDEO I2V\n"
+                f"{'═'*60}\n"
+                f"  Image source    : {first_frame_path}\n"
+                f"  Vidéo générée   : {video_path}\n"
+                f"  Ratio           : {aspect_ratio}\n"
+                f"{'═'*60}"
+            )
+            log("info", "main", f"[DRY RUN] Caption :\n{caption}")
+        else:
+            save_pending_state(video_state)
+            log("info", "main", "pending_state video_i2v sauvegardé")
+            asyncio.run(send_video_for_validation(video_path, caption, video_type))
+            log("info", "main", "Vidéo i2v envoyée sur Telegram — en attente de validation")
+
+        log_section("main", "PIPELINE VIDEO I2V TERMINÉ")
+        return video_state
+
     else:
         raise ValueError(
             f"Workflow inconnu : '{workflow}'. "
             "Valeurs acceptées : 'pinterest', 'pinterest_inpainting', 'generatif', "
             "'video_local', 'video_pinterest', 'manual_image', 'manual_video', "
-            "'manual_gen', 'manual_inpaint'"
+            "'manual_gen', 'manual_inpaint', 'video_i2v'"
         )
     log("info", "main", f"Image générée : {local_path}")
 

@@ -523,7 +523,11 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     RUN_MANUAL_GEN_PROMPT,
     RUN_INPAINT_SOURCE,
     RUN_INPAINT_PROMPT,
-) = range(11)
+    RUN_RATIO,
+    RUN_VIDEO_UPLOAD,
+    RUN_I2V_SOURCE,
+    RUN_I2V_PROMPT,
+) = range(15)
 
 
 def _load_variables() -> dict:
@@ -550,30 +554,31 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🖼️ Image Pinterest",  callback_data="pinterest"),
-            InlineKeyboardButton("🖼️ Image Génératif", callback_data="generatif"),
+            InlineKeyboardButton("🖼️ Pinterest",           callback_data="pinterest"),
+            InlineKeyboardButton("🖼️ Génératif",           callback_data="generatif"),
         ],
         [
-            InlineKeyboardButton("🪄 Générer (prompt + source)",    callback_data="manual_gen"),
-            InlineKeyboardButton("✂️ Inpainting (remplacer perso)", callback_data="manual_inpaint"),
+            InlineKeyboardButton("🎬 Vidéo Local",          callback_data="video_local"),
+            InlineKeyboardButton("🎬 Vidéo Pinterest",      callback_data="video_pinterest"),
         ],
         [
-            InlineKeyboardButton("🎬🏚️ Vidéo Local",      callback_data="video_local"),
-            InlineKeyboardButton("🎬📍 Vidéo Pinterest",  callback_data="video_pinterest"),
+            InlineKeyboardButton("🎨 Nouvelle image",       callback_data="manual_gen"),
+            InlineKeyboardButton("✂️ Remplacer personnage", callback_data="manual_inpaint"),
         ],
         [
-            InlineKeyboardButton("🎬 Higgsfield (bientôt)", callback_data="video_higgsfield"),
+            InlineKeyboardButton("🎬 Ta vidéo",             callback_data="video_upload"),
+            InlineKeyboardButton("🎬 Animer image",         callback_data="video_i2v"),
         ],
     ])
     await update.message.reply_text(
-        "🎬 *Lancement manuel — /run*\n\nQuel workflow ?",
+        "🚀 *Lancement manuel — /run*\n\nQuel workflow ?",
         reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN_V2,
     )
     return RUN_WORKFLOW
 
 
-_VIDEO_WORKFLOWS = {"video_local", "video_pinterest", "video_higgsfield"}
+_VIDEO_WORKFLOWS = {"video_local", "video_pinterest"}
 
 
 async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -587,32 +592,59 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     ctx.user_data["run_workflow"] = workflow
     ctx.user_data["run_override"] = {}
 
-    # Workflows vidéo → lancer directement
+    # Workflows vidéo automatiques → aspect ratio puis lancement
     if workflow in _VIDEO_WORKFLOWS:
-        if workflow == "video_higgsfield":
-            await query.edit_message_text(
-                "🎬 *Workflow Higgsfield* — non implémenté \\(V3 futur\\)\\.",
-                parse_mode=ParseMode.MARKDOWN_V2,
-            )
-            return ConversationHandler.END
-
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("9:16 📱", callback_data="9:16"), InlineKeyboardButton("16:9 🖥️", callback_data="16:9"), InlineKeyboardButton("1:1 ⬛", callback_data="1:1")]
+        ])
         await query.edit_message_text(
-            f"✅ Workflow *{_escape_md(workflow)}* sélectionné\n\n"
-            "🎬 Pipeline vidéo lancé\\. Résultat dans quelques minutes\\.",
+            f"✅ Workflow *{_escape_md(workflow)}* sélectionné\n\nChoisis l'aspect ratio :",
+            reply_markup=keyboard,
             parse_mode=ParseMode.MARKDOWN_V2,
         )
-        await _launch_run_pipeline(ctx)
-        return ConversationHandler.END
+        return RUN_RATIO
+
+    # Image-to-Video : image influenceuse + prompt → Kling anime
+    if workflow == "video_i2v":
+        await query.edit_message_text(
+            "🎬 *Animer image \(Kling Image\-to\-Video\)*\n\n"
+            "⚠️ L'image envoyée doit *déjà ressembler à l'influenceuse*\n"
+            "\(générée via Gemini ou autre — pas une photo quelconque\)\n\n"
+            "Pipeline :\n"
+            "  1\\. Kling anime l'image selon ton prompt\n"
+            "  2\\. Aucune vidéo source requise\n\n"
+            "⏱ Temps estimé : 5\\-8 minutes\n\n"
+            "📎 Envoie l'image de l'influenceuse en pièce jointe\n"
+            "ou /cancel pour annuler",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return RUN_I2V_SOURCE
+
+    # Vidéo upload manuel → recevoir la vidéo en pièce jointe
+    if workflow == "video_upload":
+        ctx.user_data["run_workflow"] = "manual_video"
+        await query.edit_message_text(
+            "🎬 *Ta vidéo \\(Kling Motion Control\\)*\n\n"
+            "Pipeline automatique :\n"
+            "  1\\. Extraction du meilleur frame\n"
+            "  2\\. Génération image influenceuse\n"
+            "  3\\. Transfert de mouvement via Kling\n\n"
+            "⏱ Temps estimé : 10\\-15 minutes\n\n"
+            "📎 Envoie ta vidéo en pièce jointe \\(\.mp4, \.mov\\)\n"
+            "ou /cancel pour annuler",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return RUN_VIDEO_UPLOAD
 
     # Workflows manuels directs (source + prompt) — pas de personnalisation mood/location
     if workflow == "manual_gen":
         await query.edit_message_text(
-            "🎨 *Génération \\(prompt \\+ source\\)*\n\n"
+            "🎨 *Nouvelle image*\n\n"
             "*Comment ça marche :*\n"
             "📄 Tu envoies une image source \\(décor, ambiance\\)\n"
             "📝 Tu décris la scène souhaitée\n"
             "Gemini génère une *nouvelle image* avec l'influenceuse en s'inspirant de la source\n\n"
-            "⚠️ Le fond n'est pas conservé — pour remplacer une personne, utilise Inpainting\n\n"
+            "⚠️ Le fond n'est pas conservé — pour remplacer une personne, utilise ✂️ Remplacer personnage\n\n"
             "──────────────────\n\n"
             "📎 Envoie maintenant l'image source \\(photo en pièce jointe\\)\n"
             "ou /cancel pour annuler",
@@ -627,7 +659,7 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
             f"\n  • `ref_body` : {'OK' if os.path.exists(_rbody) else '❌ MANQUANT'}"
         )
         await query.edit_message_text(
-            "✂️ *Inpainting \\(remplacer personnage\\)*\n\n"
+            "✂️ *Remplacer personnage*\n\n"
             "*Comment ça marche :*\n"
             "📄 Tu envoies une photo avec une personne\n"
             "rembg détecte et masque la personne automatiquement\n"
@@ -753,6 +785,20 @@ async def run_choose_lighting(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         f"💡 Lumière   : {override['lighting']}\n\n"
         "🚀 Pipeline lancé\\. Résultat dans quelques minutes\\."
     )
+    # Avant de lancer, demander l'aspect ratio si workflow vidéo, sinon lancer directement
+    workflow = ctx.user_data.get("run_workflow")
+    if workflow in _VIDEO_WORKFLOWS:
+        # demander ratio
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("9:16", callback_data="9:16"), InlineKeyboardButton("16:9", callback_data="16:9"), InlineKeyboardButton("1:1", callback_data="1:1")]
+        ])
+        await query.edit_message_text(
+            f"{summary}\n\nChoisis l'aspect ratio pour la génération vidéo :",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return RUN_RATIO
+
     await query.edit_message_text(summary, parse_mode=ParseMode.MARKDOWN_V2)
     await _launch_run_pipeline(ctx)
     return ConversationHandler.END
@@ -863,6 +909,118 @@ async def run_inpaint_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     return ConversationHandler.END
 
 
+async def run_i2v_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit l'image first frame pour Kling Image-to-Video."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+    if not update.message.photo:
+        await _send_error(update, "Veuillez envoyer une photo en pièce jointe\.")
+        return RUN_I2V_SOURCE
+    photo   = update.message.photo[-1]
+    tg_file = await photo.get_file()
+    dest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "temp",
+        f"run_i2v_src_{photo.file_unique_id}.jpg",
+    )
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    await tg_file.download_to_drive(dest)
+    logger.info(f"Image i2v reçue : {dest}")
+    ctx.user_data.setdefault("run_override", {})["source_path"] = dest
+    await update.message.reply_text(
+        "✅ Image reçue\.\n\n"
+        "📝 *Décris le mouvement / l'action souhaitée :*\n"
+        "_Exemple : Madison marche lentement sur la plage, ses cheveux bougent dans le vent_\n\n"
+        "ou /cancel pour annuler",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_I2V_PROMPT
+
+
+async def run_i2v_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit le prompt de mouvement et demande l'aspect ratio pour Kling Image-to-Video."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+    prompt = update.message.text.strip() if update.message.text else ""
+    if not prompt:
+        await _send_error(update, "Veuillez entrer un prompt de mouvement\.")
+        return RUN_I2V_PROMPT
+    ctx.user_data.setdefault("run_override", {})["prompt"] = prompt
+    ctx.user_data["run_workflow"] = "video_i2v"
+    ratio_keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("9:16 📱 (défaut)", callback_data="9:16"),
+        InlineKeyboardButton("16:9 🖥️",          callback_data="16:9"),
+        InlineKeyboardButton("1:1 ⬛",            callback_data="1:1"),
+    ]])
+    await update.message.reply_text(
+        f"✅ Prompt enregistré :\n\n_{_escape_md(prompt[:150])}_\n\nChoisis l'aspect ratio :",
+        reply_markup=ratio_keyboard,
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_RATIO
+
+
+async def run_video_upload_receive(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit la vidéo uploadée dans le flux /run → 🎬 Ta vidéo."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+
+    if update.message.video:
+        tg_file = await update.message.video.get_file()
+        ext = ".mp4"
+        unique_id = update.message.video.file_unique_id
+    elif update.message.document and (update.message.document.mime_type or "").startswith("video/"):
+        tg_file = await update.message.document.get_file()
+        raw_name = update.message.document.file_name or "video.mp4"
+        ext = os.path.splitext(raw_name)[1] or ".mp4"
+        unique_id = update.message.document.file_unique_id
+    else:
+        await _send_error(update, "Format non reconnu\\. Envoie un fichier \.mp4 ou \.mov\\.")
+        return RUN_VIDEO_UPLOAD
+
+    dest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "temp",
+        f"run_video_upload_{unique_id}{ext}",
+    )
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    await tg_file.download_to_drive(dest)
+    logger.info(f"Vidéo uploadée (/run Ta vidéo) : {dest}")
+    ctx.user_data.setdefault("run_override", {})["source_path"] = dest
+
+    ratio_keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("9:16 📱 (défaut)", callback_data="9:16"),
+        InlineKeyboardButton("16:9 🖥️",          callback_data="16:9"),
+        InlineKeyboardButton("1:1 ⬛",            callback_data="1:1"),
+    ]])
+    await update.message.reply_text(
+        "✅ Vidéo reçue — choisis l'aspect ratio :",
+        reply_markup=ratio_keyboard,
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_RATIO
+
+
+async def run_choose_ratio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit le choix d'aspect ratio et lance le pipeline en conséquence."""
+    query = update.callback_query
+    await query.answer()
+    ratio = query.data
+    ctx.user_data.setdefault("run_override", {})["aspect_ratio"] = ratio
+
+    workflow = ctx.user_data.get("run_workflow")
+
+    try:
+        await query.edit_message_text(
+            f"✅ Aspect ratio *{_escape_md(ratio)}* sélectionné\n\n"
+            "🚀 Pipeline vidéo lancé\. Résultat dans quelques minutes\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+    except Exception:
+        pass
+
+    await _launch_run_pipeline(ctx)
+    return ConversationHandler.END
+
+
 async def _launch_run_pipeline(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Lance le pipeline via subprocess en passant les override_params
@@ -914,6 +1072,18 @@ def _build_run_handler() -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, run_inpaint_prompt),
                 CommandHandler("skip", run_inpaint_prompt),
             ],
+            RUN_RATIO:             [CallbackQueryHandler(run_choose_ratio, pattern="^(9:16|16:9|1:1)$")],
+            RUN_I2V_SOURCE:        [MessageHandler(filters.PHOTO, run_i2v_source)],
+            RUN_I2V_PROMPT:        [MessageHandler(filters.TEXT & ~filters.COMMAND, run_i2v_prompt)],
+            RUN_VIDEO_UPLOAD:      [
+                MessageHandler(filters.VIDEO, run_video_upload_receive),
+                MessageHandler(
+                    filters.Document.MimeType("video/mp4") |
+                    filters.Document.MimeType("video/quicktime") |
+                    filters.Document.MimeType("video/x-msvideo"),
+                    run_video_upload_receive,
+                ),
+            ],
         },
         fallbacks=[CommandHandler("cancel", run_cancel), CommandHandler("run", cmd_run)],
         per_message=False,
@@ -929,7 +1099,8 @@ def _build_run_handler() -> ConversationHandler:
     MANUAL_TYPE,
     MANUAL_IMAGE_SOURCE,
     MANUAL_VIDEO_RECEIVE,
-) = range(3)
+    MANUAL_VIDEO_RATIO,
+) = range(4)
 
 
 async def cmd_manual_generation(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1071,13 +1242,43 @@ async def manual_receive_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     await tg_file.download_to_drive(dest)
     logger.info(f"Vidéo reçue via Telegram : {dest}")
 
+    ctx.user_data["manual_video_path"] = dest
+
+    ratio_keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("9:16 📱 (défaut)", callback_data="manual_ratio_9:16"),
+        InlineKeyboardButton("16:9 🖥️",          callback_data="manual_ratio_16:9"),
+        InlineKeyboardButton("1:1 ⬛",            callback_data="manual_ratio_1:1"),
+    ]])
     await update.message.reply_text(
-        "\U0001f4e5 Vidéo reçue \u2014 lancement du pipeline\\.\\.\\.\n"
-        "\u23f3 Temps estimé : 10\\-15 minutes \\(Kling Motion Control\\)\\.\n"
-        "La vidéo finale vous sera envoyée ici pour validation\\.",
+        "\U0001f4e5 Vidéo reçue \— choisis l'aspect ratio de la vidéo générée :",
+        reply_markup=ratio_keyboard,
         parse_mode=ParseMode.MARKDOWN_V2,
     )
-    _launch_manual_pipeline(dest, "manual_video")
+    return MANUAL_VIDEO_RATIO
+
+
+async def manual_choose_video_ratio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit le choix de ratio pour /manualGeneration vidéo puis lance le pipeline."""
+    query = update.callback_query
+    await query.answer()
+    ratio = query.data.replace("manual_ratio_", "")   # "9:16", "16:9" ou "1:1"
+
+    dest = ctx.user_data.get("manual_video_path", "")
+    if not dest or not os.path.exists(dest):
+        await query.edit_message_text("❌ Chemin vidéo introuvable — recommence \(/manualGeneration\)\.\.")
+        return ConversationHandler.END
+
+    try:
+        await query.edit_message_text(
+            f"\u2705 Ratio *{_escape_md(ratio)}* s\u00e9lectionn\u00e9\.\n"
+            "\u23f3 Temps estim\u00e9 : 10\\-15 minutes \\(Kling Motion Control\\)\.\n"
+            "La vid\u00e9o finale te sera envoy\u00e9e ici pour validation\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+    except Exception:
+        pass
+
+    _launch_manual_pipeline(dest, "manual_video", aspect_ratio=ratio)
     return ConversationHandler.END
 
 
@@ -1085,6 +1286,7 @@ def _launch_manual_pipeline(
     source: str,
     workflow: str,
     is_url: bool = False,
+    aspect_ratio: str = "9:16",
 ) -> None:
     """
     Lance main.py --workflow manual_image|manual_video avec la source donnée.
@@ -1092,7 +1294,7 @@ def _launch_manual_pipeline(
     """
     import tempfile
 
-    params = {"source_path": source, "is_url": is_url}
+    params = {"source_path": source, "is_url": is_url, "aspect_ratio": aspect_ratio}
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", delete=False, encoding="utf-8"
     ) as f:
@@ -1143,6 +1345,9 @@ def _build_manual_gen_handler() -> ConversationHandler:
                     filters.Document.MimeType("video/x-msvideo"),
                     manual_receive_video,
                 ),
+            ],
+            MANUAL_VIDEO_RATIO: [
+                CallbackQueryHandler(manual_choose_video_ratio, pattern="^manual_ratio_(9:16|16:9|1:1)$"),
             ],
         },
         fallbacks=[CommandHandler("cancel", manual_cancel)],
@@ -1276,7 +1481,6 @@ def start_bot() -> None:
     app.add_handler(CommandHandler("schedule", cmd_schedule))
     app.add_handler(CommandHandler("retryKling", cmd_retry_kling))
     app.add_handler(_build_run_handler())
-    app.add_handler(_build_manual_gen_handler())
 
     # Callbacks publication vidéo (indépendants de la conversation /run)
     _VIDEO_PUB_ACTIONS = (

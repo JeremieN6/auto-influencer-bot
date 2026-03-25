@@ -56,6 +56,7 @@ logger = get_logger(__name__)
 
 KLING_API_BASE         = "https://api-singapore.klingai.com/v1"
 KLING_MOTION_ENDPOINT  = f"{KLING_API_BASE}/videos/motion-control"
+KLING_I2V_ENDPOINT     = f"{KLING_API_BASE}/videos/image2video"
 
 # URL placeholder du default config → nginx non configuré
 _NGINX_DEFAULT_PLACEHOLDER = "ton-domaine.com"
@@ -488,5 +489,157 @@ def generate_video_motion_control(
 
     raise RuntimeError(
         f"Kling Motion Control timeout après {POLL_MAX * POLL_INTERVAL_S}s "
+        f"(task_id={task_id}). La vidéo est peut-être encore en cours de génération."
+    )
+
+
+# ================================================================
+# Génération vidéo Image-to-Video
+# ================================================================
+
+def generate_video_image2video(
+    first_frame_path: str,
+    prompt: str,
+    duration: int = 5,
+    mode: str = "std",
+    aspect_ratio: str = "9:16",
+    cfg_scale: float = 0.5,
+) -> str:
+    """
+    Génère une vidéo depuis une image first frame + prompt texte via Kling Image-to-Video.
+
+    Contrairement à Motion Control, cette méthode ne requiert PAS de vidéo source.
+    Kling anime l'image directement selon le prompt fourni.
+
+    Args:
+        first_frame_path : chemin local de l'image de départ (première frame de la vidéo)
+        prompt           : description textuelle du mouvement / de l'action souhaitée
+        duration         : durée de la vidéo en secondes — 5 ou 10 (défaut : 5)
+        mode             : "std" (économique) | "pro" (haute qualité, plus lent)
+        aspect_ratio     : ratio de la vidéo — "9:16" (vertical), "16:9" (landscape), "1:1"
+        cfg_scale        : guidance scale 0.0–1.0 (défaut 0.5 — équilibre prompt/image)
+
+    Returns:
+        str : chemin local de la vidéo générée (.mp4) dans outputs/
+
+    Raises:
+        ValueError   : si l'API Kling retourne une erreur ou que les credentials manquent
+        RuntimeError : si le polling dépasse le timeout (12 min)
+
+    Notes:
+        - Image first frame : .jpg/.jpeg/.png, max 10MB, min 300px, ratio 2:5 à 5:2
+        - Statuts : queued → generating → succeed | failed
+    """
+    logger.info("=== Kling Image-to-Video démarré ===")
+    logger.info(f"First frame  : {first_frame_path}")
+    logger.info(f"Prompt       : {prompt[:120]}")
+    logger.info(f"Durée        : {duration}s | Mode : {mode} | Ratio : {aspect_ratio}")
+    logger.info(f"Modèle       : {KLING_MODEL}")
+
+    if not os.path.exists(first_frame_path):
+        raise FileNotFoundError(f"Image first frame introuvable : {first_frame_path}")
+
+    if duration not in (5, 10):
+        raise ValueError(f"duration doit être 5 ou 10, reçu : {duration}")
+
+    # ── Préparer l'image selon le mode de transport ──────────────
+    if _nginx_is_configured():
+        logger.info("Mode transport : nginx (VPS)")
+        image_payload_value = _expose_file_via_nginx(first_frame_path)
+        logger.info(f"Image URL : {image_payload_value}")
+        use_base64 = False
+    else:
+        logger.info("Mode transport : local (Base64 — nginx non configuré)")
+        image_payload_value = _image_to_base64(first_frame_path)
+        logger.info(f"Base64 image encodé ({len(image_payload_value)} chars)")
+        use_base64 = True
+
+    # ── Soumettre la tâche Image-to-Video ────────────────────────
+    token   = _generate_auth_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/json",
+    }
+
+    payload: dict = {
+        "model_name":   KLING_MODEL,
+        "image_url":    image_payload_value,
+        "prompt":       prompt,
+        "duration":     str(duration),
+        "mode":         mode,
+        "aspect_ratio": aspect_ratio,
+        "cfg_scale":    cfg_scale,
+    }
+
+    logger.info("Soumission tâche Kling Image-to-Video...")
+    resp      = requests.post(KLING_I2V_ENDPOINT, json=payload, headers=headers, timeout=30)
+    resp_data = resp.json()
+
+    if resp.status_code not in (200, 201):
+        raise ValueError(f"Kling API erreur ({resp.status_code}) : {resp_data}")
+
+    task_id = (
+        resp_data.get("data", {}).get("task_id")
+        or resp_data.get("task_id")
+    )
+    if not task_id:
+        raise ValueError(f"Kling n'a pas retourné de task_id : {resp_data}")
+
+    logger.info(f"Tâche soumise — task_id : {task_id}")
+
+    # ── Polling statut ───────────────────────────────────────────
+    poll_url = f"{KLING_I2V_ENDPOINT}/{task_id}"
+
+    for i in range(POLL_MAX):
+        time.sleep(POLL_INTERVAL_S)
+
+        if i > 0 and i % 20 == 0:
+            token = _generate_auth_token()
+            headers["Authorization"] = f"Bearer {token}"
+
+        poll_resp = requests.get(poll_url, headers=headers, timeout=15)
+        poll_data = poll_resp.json()
+
+        data    = poll_data.get("data", poll_data)
+        status  = data.get("task_status") or data.get("status", "unknown")
+        elapsed = (i + 1) * POLL_INTERVAL_S
+
+        logger.debug(f"Polling [{i+1}/{POLL_MAX}] — statut : {status} ({elapsed}s)")
+
+        if status == "succeed":
+            video_url: str | None = None
+            try:
+                videos = data.get("task_result", {}).get("videos", [])
+                if videos:
+                    video_url = videos[0].get("url")
+            except Exception:
+                pass
+
+            if not video_url:
+                raise ValueError(f"Tâche succeed mais URL vidéo absente : {data}")
+
+            logger.info(f"Vidéo générée par Kling — URL : {video_url}")
+
+            filename   = f"video_i2v_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+            local_path = os.path.join(OUTPUTS_DIR, filename)
+            os.makedirs(OUTPUTS_DIR, exist_ok=True)
+
+            vid_resp = requests.get(video_url, timeout=120, stream=True)
+            vid_resp.raise_for_status()
+            with open(local_path, "wb") as f:
+                for chunk in vid_resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            size_mb = os.path.getsize(local_path) / (1024 * 1024)
+            logger.info(f"Vidéo téléchargée : {local_path} ({size_mb:.1f} MB)")
+            logger.info("=== Kling Image-to-Video terminé ===")
+            return local_path
+
+        if status in ("failed", "error"):
+            err_msg = data.get("task_status_msg") or data.get("error_message", "")
+            raise ValueError(f"Kling tâche échouée (status={status}) : {err_msg or data}")
+
+    raise RuntimeError(
+        f"Kling Image-to-Video timeout après {POLL_MAX * POLL_INTERVAL_S}s "
         f"(task_id={task_id}). La vidéo est peut-être encore en cours de génération."
     )
