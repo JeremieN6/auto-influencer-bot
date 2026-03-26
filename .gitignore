@@ -32,9 +32,11 @@ outputs/*.webm
 logs/*.log
 logs/cron.log
 
-# Données runtime (historique généré automatiquement)
+# Données runtime (état généré automatiquement — NE PAS déployer via git)
+# Ces fichiers sont propres à chaque environnement (local vs VPS)
 data/history.json
 data/pending_state.json
+data/video_history.json
 
 # Image de référence (ne pas commit — données sensibles/propriétaires)
 data/ref_*.jpg

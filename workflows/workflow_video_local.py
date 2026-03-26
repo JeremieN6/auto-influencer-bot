@@ -150,7 +150,7 @@ def _mark_video_used(video_name: str) -> None:
     logger.info(f"[video_history] '{video_name}' marquée comme utilisée (cycle {history['cycle']})")
 
 
-def _pick_random_video(videos_dir: str) -> str:
+def _pick_random_video(videos_dir: str, dry_run: bool = False) -> str:
     """
     Sélectionne aléatoirement une vidéo non encore utilisée dans ce cycle.
 
@@ -161,6 +161,7 @@ def _pick_random_video(videos_dir: str) -> str:
       (nouveau cycle) et repart du pool complet   → rotation automatique,
       aucune intervention manuelle requise
     - Enregistre la vidéo choisie dans l'historique AVANT de lancer le pipeline
+      (sauf si dry_run=True — aucune modification de video_history.json)
     """
     vdir = Path(videos_dir)
 
@@ -205,7 +206,11 @@ def _pick_random_video(videos_dir: str) -> str:
     )
 
     # Marquer immédiatement comme utilisée (avant le pipeline)
-    _mark_video_used(chosen.name)
+    # Ignoré en dry_run pour ne pas polluer l'historique lors des tests locaux.
+    if dry_run:
+        logger.info(f"[DRY RUN] video_history.json non modifié — '{chosen.name}' non marquée utilisée")
+    else:
+        _mark_video_used(chosen.name)
 
     return str(chosen)
 
@@ -279,13 +284,14 @@ def _build_ambiance_caption_prompt(video_path: str, step: dict) -> str:
 # Point d'entrée
 # ================================================================
 
-def run(concept: dict | None = None) -> tuple[str, str, str, str, str]:
+def run(concept: dict | None = None, dry_run: bool = False) -> tuple[str, str, str, str, str]:
     """
     Exécute le workflow vidéo local complet.
 
     Args:
-        concept : dict optionnel (pour contexte calendrier).
-                  Si None, un step calendrier est récupéré automatiquement.
+        concept  : dict optionnel (pour contexte calendrier).
+                   Si None, un step calendrier est récupéré automatiquement.
+        dry_run  : si True, ne modifie pas video_history.json (test local sans impact VPS).
 
     Returns:
         (local_video_path, public_url, filename, caption, video_type)
@@ -304,7 +310,7 @@ def run(concept: dict | None = None) -> tuple[str, str, str, str, str]:
 
     # ── Étape 1/5 : Sélection vidéo locale ──────────────────────
     log_step(__name__, 1, TOTAL_STEPS, "Sélection vidéo locale")
-    video_path = _pick_random_video(VIDEOS_DIR)
+    video_path = _pick_random_video(VIDEOS_DIR, dry_run=dry_run)
 
     # ── Étape 2/5 : Extraction frame intelligente ───────────────
     log_step(__name__, 2, TOTAL_STEPS, "Extraction frame intelligente (scan multi-timestamps)")

@@ -264,17 +264,15 @@ def run_pipeline(
         if workflow == "video_local":
             from workflows.workflow_video_local import run as run_video_workflow
             from image_generator import ImageSafetyError as _ImgSafetyErr, enable_safety_fallback as _esf, disable_safety_fallback as _dsf
+            # Pré-activer le fallback pour que generate_image() gère IMAGE_SAFETY en interne
+            # (sanitisation du prompt sur la même vidéo — évite de brûler une 2ème vidéo)
+            _esf()
             try:
-                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept)
+                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept, dry_run=dry_run)
             except _ImgSafetyErr:
-                log("warning", "main", "IMAGE_SAFETY/OTHER sur video_local — activation fallback sanitisé")
-                _esf()
-                try:
-                    video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept)
-                except _ImgSafetyErr:
-                    raise ValueError("IMAGE_SAFETY/OTHER persistant sur video_local — abandon")
-                finally:
-                    _dsf()
+                raise ValueError("IMAGE_SAFETY/OTHER persistant sur video_local — abandon")
+            finally:
+                _dsf()
 
             # Auto-refill : si /data/videos/ vide après traitement, transférer le prochain batch
             from video_batch_manager import auto_refill_if_empty

@@ -222,10 +222,42 @@ def _sanitize_prompt_for_safety(prompt: str) -> str:
     """
     Remplace les descriptions corporelles explicites par des équivalents neutres.
     Utilisé comme fallback quand Gemini retourne IMAGE_SAFETY.
+
+    Couvre à la fois les strings fixes (PROMPT_JSON_TO_IMAGE) et les strings dynamiques
+    générées par inject_madison_body() avec le vrai nom du vêtement.
     """
+    import re
     sanitized = prompt
+    # Remplacement des strings fixes
     for old, new in _SAFETY_REPLACEMENTS:
         sanitized = sanitized.replace(old, new)
+    # Remplacement des patterns dynamiques (inject_madison_body injecte le vrai nom du vêtement)
+    # ex: "stretching the white top", "fill the bikini top", "enlarged breasts that fill the swimsuit"
+    sanitized = re.sub(
+        r'significantly enlarged breasts[^."\n]*',
+        'natural proportional bust',
+        sanitized,
+    )
+    sanitized = re.sub(
+        r'stretching the (?!top garment)[\w][\w\s]+(?=[.,"\n])',
+        'fitting the attire',
+        sanitized,
+    )
+    sanitized = re.sub(
+        r'(?:fill|filling) the [\w][\w\s]+(?=[.,"\n])',
+        'complement the attire',
+        sanitized,
+    )
+    sanitized = re.sub(
+        r'Voluptuous hourglass figure[^."\n]*',
+        'Feminine hourglass figure with natural proportions.',
+        sanitized,
+    )
+    sanitized = re.sub(
+        r'full and rounded high-set glutes[^."\n]*',
+        'natural feminine figure',
+        sanitized,
+    )
     logger.info("Prompt sanitisé pour contournement IMAGE_SAFETY")
     return sanitized
 
