@@ -553,14 +553,16 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("── 🤖 Automatique ──",       callback_data="noop")],
         [
-            InlineKeyboardButton("🖼️ Pinterest",           callback_data="pinterest"),
-            InlineKeyboardButton("🖼️ Génératif",           callback_data="generatif"),
+            InlineKeyboardButton("🖼️ Image Pinterest",      callback_data="pinterest"),
+            InlineKeyboardButton("🖼️ Image Génératif",      callback_data="generatif"),
         ],
         [
             InlineKeyboardButton("🎬 Vidéo Local",          callback_data="video_local"),
             InlineKeyboardButton("🎬 Vidéo Pinterest",      callback_data="video_pinterest"),
         ],
+        [InlineKeyboardButton("── ✋ Manuel ──",            callback_data="noop")],
         [
             InlineKeyboardButton("🎨 Nouvelle image",       callback_data="manual_gen"),
             InlineKeyboardButton("✂️ Remplacer personnage", callback_data="manual_inpaint"),
@@ -589,6 +591,11 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
     workflow = query.data
+
+    # Boutons séparateurs non-cliquables → ignorer silencieusement
+    if workflow == "noop":
+        return RUN_WORKFLOW
+
     ctx.user_data["run_workflow"] = workflow
     ctx.user_data["run_override"] = {}
 
