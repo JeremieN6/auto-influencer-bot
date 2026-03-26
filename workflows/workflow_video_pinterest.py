@@ -34,7 +34,7 @@ from pathlib import Path
 from caption_generator import generate_caption
 from concept_generator import build_caption_prompt, get_current_calendar_step
 from frame_extractor import extract_best_frame
-from image_generator import generate_image, image_to_json, inject_madison_body
+from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body
 from logger import get_logger, log_section, log_step
 from prompts import PROMPT_JSON_TO_IMAGE
 
@@ -351,7 +351,24 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         prompt_text = PROMPT_JSON_TO_IMAGE.format(
             scene_json=json.dumps(scene_json, indent=2, ensure_ascii=False)
         )
-        madison_image_path, _ = generate_image(prompt_text)
+        try:
+            madison_image_path, _ = generate_image(prompt_text)
+        except ImageSafetyError:
+            # Gemini refuse l'image Madison même après prompt sanitisé → basculer
+            # en flux ambiance (vidéo source brute, type=story) plutôt qu'abandonner.
+            logger.warning(
+                "IMAGE_SAFETY persistant sur génération image Madison — "
+                "fallback flux ambiance (vidéo source brute, type=story)"
+            )
+            filename, public_url = _expose_video_via_nginx(video_path)
+            concept_hint = {"location": "aesthetic scene", "mood": "chill ambiance",
+                            "outfit": "", "lighting": "natural light"}
+            caption_prompt = (
+                build_caption_prompt(concept_hint, step)
+                + "\n\n[Instagram Story — ambiance vidéo, pas de personnage]"
+            )
+            caption = generate_caption(caption_prompt)
+            return video_path, public_url, filename, caption, "story", "", video_path
         logger.info(f"Image Madison générée : {madison_image_path}")
 
         log_step(__name__, 5, TOTAL_STEPS, "Kling Motion Control")

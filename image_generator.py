@@ -140,12 +140,20 @@ def _save_image_from_response(response, filename: str) -> str:
     parts   = getattr(content, "parts", None) if content else None
 
     if not parts:
-        # Détecter IMAGE_SAFETY et IMAGE_OTHER — les deux sont des refus de génération
-        # qui bénéficient du même traitement (fallback prompt sanitisé)
+        # IMAGE_SAFETY = vrai blocage contenu (le prompt est refusé)
+        # IMAGE_OTHER  = autre blocage Gemini (modèle non dispo, quota, bug API...)
+        # On distingue les deux pour ne pas appliquer le fallback sanitisé sur IMAGE_OTHER.
         finish_reason_str = str(finish_reason) if finish_reason else ""
-        if "IMAGE_SAFETY" in finish_reason_str or "IMAGE_OTHER" in finish_reason_str:
+        if "IMAGE_SAFETY" in finish_reason_str:
             raise ImageSafetyError(
-                f"Gemini a bloqué la génération ({finish_reason_str}). "
+                f"Gemini a bloqué la génération pour raison de sécurité ({finish_reason_str}). "
+                f"Réponse complète : {response}"
+            )
+        if "IMAGE_OTHER" in finish_reason_str:
+            raise ValueError(
+                f"Gemini a retourné IMAGE_OTHER — le modèle ne supporte peut-être pas "
+                f"la génération d'image, ou quota épuisé ({finish_reason_str}). "
+                f"Vérifier GEMINI_MODEL_IMAGE dans config.py. "
                 f"Réponse complète : {response}"
             )
         raise ValueError(
@@ -516,17 +524,59 @@ def inject_madison_body(scene_json: dict) -> dict:
     import copy
     enriched = copy.deepcopy(scene_json)
 
-    # Récupérer le vêtement du haut depuis le JSON Pinterest si disponible,
-    # pour contextualiser "stretching the {top_garment}" avec le vêtement réel.
+    # Récupérer le vêtement du haut depuis le JSON Pinterest si disponible.
+    # image_to_json() retourne subject.clothing.outfit_description (pas subject.wardrobe).
     top_garment = "top garment"
     try:
+        # Priorité 1 : subject.wardrobe.top (workflow_generatif V2)
         wardrobe = enriched.get("subject", {}).get("wardrobe", {})
         top_raw = wardrobe.get("top", "") or wardrobe.get("top_garment", "")
+        # Priorité 2 : subject.clothing.outfit_description (image_to_json V1 Pinterest)
+        if not top_raw:
+            clothing = enriched.get("subject", {}).get("clothing", {})
+            top_raw = clothing.get("outfit_description", "") or clothing.get("top", "")
         if top_raw:
-            # Extraire les premiers mots (ex: "White triangle bikini top, ..." → "white triangle bikini top")
             top_garment = top_raw.split(",")[0].strip().lower()
     except Exception:
         pass  # fallback silencieux sur "top garment"
+
+    # Nettoyer les références aux proportions corporelles dans les descriptions
+    # de vêtements — elles viendraient contaminer le prompt final et faire dérailler
+    # les proportions de Madison (bug confirmé sur video_03_lipsync).
+    _BODY_CUE_WORDS = [
+        "slim", "slender", "petite", "thin", "skinny", "toned", "athletic",
+        "lean", "small bust", "flat", "curvy", "plus size", "voluptuous",
+        "large frame", "small frame", "big", "tiny waist", "showing off figure",
+        "body", "figure", "silhouette", "proportions", "measurements",
+    ]
+    def _strip_body_cues(text: str) -> str:
+        if not isinstance(text, str):
+            return text
+        lowered = text.lower()
+        # Supprimer les phrases entières contenant des mots corporels
+        import re as _re
+        for word in _BODY_CUE_WORDS:
+            if word in lowered:
+                # Retirer la portion de phrase contenant le mot (jusqu'à , ou .)
+                text = _re.sub(
+                    rf'[^,.]* {_re.escape(word)}[^,.]*[,.]?',
+                    '',
+                    text,
+                    flags=_re.IGNORECASE,
+                ).strip(" ,")
+                lowered = text.lower()
+        return text.strip()
+
+    # Appliquer le nettoyage sur les champs de vêtements du JSON source
+    try:
+        clothing = enriched.get("subject", {}).get("clothing", {})
+        if clothing:
+            if "outfit_description" in clothing:
+                clothing["outfit_description"] = _strip_body_cues(clothing["outfit_description"])
+            if "style" in clothing:
+                clothing["style"] = _strip_body_cues(clothing["style"])
+    except Exception:
+        pass
 
     # Bloc corps fixe — formules anatomiques gagnantes
     madison_body = {

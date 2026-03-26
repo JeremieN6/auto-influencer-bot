@@ -56,6 +56,7 @@ Return ONLY a valid JSON object, no markdown fencing:
 }
 
 CRITICAL: No physical appearance in subject section (no hair/eyes/skin/age).
+CRITICAL: outfit_description and style MUST NOT mention body proportions, figure type, bust size, waist size, body shape, or how clothes fit on the body (no "fitted on her slim figure", no "tight on her frame", no "accentuating her curves", etc.). Only describe garment type, color, fabric, and style.
 aspect_ratio must be one of: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9.
 """
 
@@ -67,19 +68,22 @@ aspect_ratio must be one of: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9
 PROMPT_JSON_TO_IMAGE = """
 Generate a professional photo-realistic image featuring the character described below.
 Use the attached reference sheet for the character's face, hair and skin tone.
-
-CRITICAL — body proportions to reproduce exactly:
-- Very large, full bust with visible cleavage, stretching the top garment
-- Narrow defined waist, pronounced hourglass silhouette
-- Wide hips and rounded glutes
-These body proportions are NON-NEGOTIABLE and must be clearly visible in the final image.
-
 Respect all compositional, lighting, environmental and clothing details from the Scene JSON below.
 The character's face must match the reference sheet exactly.
 [CHARACTER REFERENCE IMAGE ATTACHED]
 
 Scene JSON:
 {scene_json}
+
+===== ABSOLUTE BODY OVERRIDE — READ THIS LAST, APPLY THIS FIRST =====
+Regardless of ANY body description above, the character MUST have these exact proportions:
+- Extremely large, very full bust with deep visible cleavage, noticeably stretching the top garment
+- Dramatically narrow waist, extreme hourglass silhouette
+- Very wide hips, full high rounded glutes — extreme waist-to-hip ratio
+ANY conflicting body description in the JSON above MUST BE IGNORED.
+These proportions are the SINGLE MOST IMPORTANT instruction. They are NON-NEGOTIABLE.
+The final image is only acceptable if these body proportions are clearly and visibly displayed.
+===== END BODY OVERRIDE =====
 """
 
 # ================================================================

@@ -91,9 +91,17 @@ def _ensure_h264_mp4(video_path: str) -> str:
         ffmpeg = _get_ffmpeg_exe()
         cmd = [
             ffmpeg, "-i", str(path),
+            # scale=trunc(iw/2)*2:trunc(ih/2)*2 force le passage par le pipeline
+            # de filtres, ce qui déclenche l'auto-rotation FFmpeg (rotate=90/270
+            # courant sur les vidéos portrait iPhone/Android).
+            # Les dimensions trunc(…/2)*2 garantissent des valeurs paires exigées par H.264.
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart",
+            # Efface la métadonnée rotate= résiduelle : la rotation est déjà
+            # appliquée aux pixels, inutile de la conserver (et Kling l'ignorerait).
+            "-metadata:s:v:0", "rotate=0",
             "-y", output_path,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)

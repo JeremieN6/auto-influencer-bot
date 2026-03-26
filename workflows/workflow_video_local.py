@@ -40,7 +40,7 @@ from pathlib import Path
 from caption_generator import generate_caption
 from concept_generator import build_caption_prompt, get_current_calendar_step
 from frame_extractor import extract_best_frame
-from image_generator import generate_image, image_to_json, inject_madison_body
+from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body
 from logger import get_logger, log_section, log_step
 from prompts import PROMPT_JSON_TO_IMAGE
 
@@ -357,7 +357,16 @@ def _run_person_branch(
     prompt_text = PROMPT_JSON_TO_IMAGE.format(
         scene_json=json.dumps(scene_json, indent=2, ensure_ascii=False)
     )
-    madison_image_path, _ = generate_image(prompt_text)
+    try:
+        madison_image_path, _ = generate_image(prompt_text)
+    except ImageSafetyError:
+        # Gemini refuse l'image Madison même après prompt sanitisé → publier la vidéo
+        # source brute comme Story (flux ambiance) plutôt qu'abandonner le run.
+        logger.warning(
+            "IMAGE_SAFETY persistant sur génération image Madison — "
+            "fallback flux ambiance (vidéo source brute, type=story)"
+        )
+        return _run_ambiance_branch(video_path, frame_path, step)
     logger.info(f"Image Madison générée : {madison_image_path}")
 
     # Sauvegarder l'état intermédiaire avant Kling (recovery si erreur)
