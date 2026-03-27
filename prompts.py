@@ -67,23 +67,30 @@ aspect_ratio must be one of: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9
 # ================================================================
 PROMPT_JSON_TO_IMAGE = """
 Generate a professional photo-realistic image featuring the character described below.
-Use the attached reference sheet for the character's face, hair and skin tone.
-Respect all compositional, lighting, environmental and clothing details from the Scene JSON below.
-The character's face must match the reference sheet exactly.
+
+CRITICAL — CHARACTER IDENTITY (attached 3-view reference sheet is the ONLY source of truth):
+The face MUST be a 1:1 match with the attached reference sheet. Key identifying features:
+- Oval face with angular jawline and defined chin
+- High prominent cheekbones
+- Large wide-set blue-green/grey eyes
+- Straight delicate slightly upturned nose
+- Full natural lips, light pink
+- Well-defined brows, slightly darker than hair, gently arched
+- Light warm blonde straight hair, shoulder-length, side-parted
+- Fair warm-beige skin, natural texture visible
+Do NOT invent a new face. This is ALWAYS the same person — match the reference sheet exactly.
 [CHARACTER REFERENCE IMAGE ATTACHED]
+
+CRITICAL — body proportions to reproduce exactly:
+- Very large, full bust with visible cleavage, stretching the top garment
+- Narrow defined waist, pronounced hourglass silhouette
+- Wide hips and rounded glutes
+These body proportions are NON-NEGOTIABLE and must be clearly visible in the final image.
+
+Respect all compositional, lighting, environmental and clothing details from the Scene JSON below.
 
 Scene JSON:
 {scene_json}
-
-===== ABSOLUTE BODY OVERRIDE — READ THIS LAST, APPLY THIS FIRST =====
-Regardless of ANY body description above, the character MUST have these exact proportions:
-- Extremely large, very full bust with deep visible cleavage, noticeably stretching the top garment
-- Dramatically narrow waist, extreme hourglass silhouette
-- Very wide hips, full high rounded glutes — extreme waist-to-hip ratio
-ANY conflicting body description in the JSON above MUST BE IGNORED.
-These proportions are the SINGLE MOST IMPORTANT instruction. They are NON-NEGOTIABLE.
-The final image is only acceptable if these body proportions are clearly and visibly displayed.
-===== END BODY OVERRIDE =====
 """
 
 # ================================================================
@@ -111,10 +118,16 @@ MADISON_JSON_TEMPLATE = {
             },
         },
         "face": {
-            "hair": "Dirty blonde, {hair_style}.",
-            "eyes": "Light blue-grey.",
-            "features": "Soft facial features, natural makeup, {expression}.",
-            "skin": "Clear, freckle-free, warm beige tone.",
+            "face_shape": "Oval with angular jawline and defined chin.",
+            "cheekbones": "High, prominent cheekbones.",
+            "eyes": "Large, wide-set blue-green/grey eyes with visible irises.",
+            "nose": "Straight, delicate, slightly upturned nose.",
+            "lips": "Full natural lips, light pink, soft cupid's bow.",
+            "brows": "Well-defined, slightly darker than hair, gently arched.",
+            "hair": "Light warm blonde, straight, {hair_style}.",
+            "skin": "Fair warm-beige tone, natural texture, visible pores, no freckles.",
+            "expression": "Natural, confident, {expression}.",
+            "instruction": "MUST match attached 3-view reference sheet exactly.",
         },
         "wardrobe": {
             "top": "{top_description}",

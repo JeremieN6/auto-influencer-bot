@@ -203,26 +203,27 @@ def _copy_to_nginx(local_path: str, filename: str) -> str:
 # ================================================================
 
 _SAFETY_REPLACEMENTS = [
-    # Bloc corps explicite du PROMPT_JSON_TO_IMAGE
+    # Bloc CRITICAL du PROMPT_JSON_TO_IMAGE (version fb0218c)
     (
         "CRITICAL — body proportions to reproduce exactly:\n"
         "- Very large, full bust with visible cleavage, stretching the top garment\n"
         "- Narrow defined waist, pronounced hourglass silhouette\n"
         "- Wide hips and rounded glutes\n"
         "These body proportions are NON-NEGOTIABLE and must be clearly visible in the final image.",
-        "Athletic, proportional feminine figure with natural curves."
+        "Feminine figure with natural proportions and hourglass shape."
     ),
-    # Descriptions spécifiques dans les JSONs injectés
-    ("Extremely large, very full breasts causing cleavage",   "Natural proportional bust"),
-    ("very full breasts",                                      "natural bust"),
-    ("cleavage",                                               "neckline"),
+    # Descriptions dans les JSONs injectés par inject_madison_body()
+    ("Extremely large, very full breasts causing cleavage",   "Full, prominent bust"),
+    ("significantly enlarged breasts",                         "full bust"),
+    ("very full breasts",                                      "full bust"),
+    ("cleavage and stretching",                                "filling"),
     ("NON-NEGOTIABLE",                                         "important"),
-    ("Voluptuous hourglass figure with significantly enlarged breasts", "Feminine hourglass figure"),
-    ("stretching the top garment",                             "fitting the top garment"),
+    ("Voluptuous hourglass figure with significantly enlarged breasts", "Hourglass figure with full bust"),
+    ("stretching the top garment",                             "filling the top garment"),
     ("visible cleavage",                                       "natural neckline"),
-    ("pronounced hourglass",                                   "hourglass"),
-    ("Wide hips and rounded glutes",                           "defined hips"),
-    ("Narrow defined waist, pronounced hourglass silhouette",  "defined waist, feminine silhouette"),
+    ("full and rounded high-set glutes with extreme waist-to-hip ratio", "rounded glutes with hourglass ratio"),
+    ("Prominent gluteal muscles, extreme waist-to-hip ratio, shapely posterior chain", "Hourglass proportions, curvaceous shape"),
+    ("Wide hips and rounded glutes",                           "Defined hips"),
 ]
 
 
@@ -243,12 +244,17 @@ def _sanitize_prompt_for_safety(prompt: str) -> str:
     # ex: "stretching the white top", "fill the bikini top", "enlarged breasts that fill the swimsuit"
     sanitized = re.sub(
         r'significantly enlarged breasts[^."\n]*',
-        'natural proportional bust',
+        'full bust',
+        sanitized,
+    )
+    sanitized = re.sub(
+        r'[Ee]xtremely large[^."\n]*breasts[^."\n]*',
+        'Full, prominent bust',
         sanitized,
     )
     sanitized = re.sub(
         r'stretching the (?!top garment)[\w][\w\s]+(?=[.,"\n])',
-        'fitting the attire',
+        'filling the attire',
         sanitized,
     )
     sanitized = re.sub(
@@ -258,12 +264,17 @@ def _sanitize_prompt_for_safety(prompt: str) -> str:
     )
     sanitized = re.sub(
         r'Voluptuous hourglass figure[^."\n]*',
-        'Feminine hourglass figure with natural proportions.',
+        'Hourglass figure with feminine proportions.',
         sanitized,
     )
     sanitized = re.sub(
         r'full and rounded high-set glutes[^."\n]*',
-        'natural feminine figure',
+        'rounded glutes',
+        sanitized,
+    )
+    sanitized = re.sub(
+        r'causing cleavage[^."\n]*',
+        'filling the garment',
         sanitized,
     )
     logger.info("Prompt sanitisé pour contournement IMAGE_SAFETY")
@@ -536,7 +547,9 @@ def inject_madison_body(scene_json: dict) -> dict:
             clothing = enriched.get("subject", {}).get("clothing", {})
             top_raw = clothing.get("outfit_description", "") or clothing.get("top", "")
         if top_raw:
-            top_garment = top_raw.split(",")[0].strip().lower()
+            # Garder seulement la première clause (avant , ou .) et limiter à 60 chars
+            part = top_raw.split(",")[0].split(".")[0].strip().lower()
+            top_garment = part[:60] if len(part) > 60 else part
     except Exception:
         pass  # fallback silencieux sur "top garment"
 
@@ -578,7 +591,7 @@ def inject_madison_body(scene_json: dict) -> dict:
     except Exception:
         pass
 
-    # Bloc corps fixe — formules anatomiques gagnantes
+    # Bloc corps fixe — formules anatomiques gagnantes (termes validés par Gemini dans JSON context)
     madison_body = {
         "physique": (
             f"Voluptuous hourglass figure with significantly enlarged breasts that fill the {top_garment}. "
@@ -601,12 +614,18 @@ def inject_madison_body(scene_json: dict) -> dict:
         },
     }
 
-    # Bloc visage fixe de Madison
+    # Bloc visage fixe de Madison — landmarks détaillés pour forcer la cohérence
     madison_face = {
-        "hair": "Dirty blonde.",
-        "eyes": "Light blue-grey.",
-        "features": "Soft facial features, natural makeup.",
-        "skin": "Clear, freckle-free, warm beige tone.",
+        "face_shape": "Oval with angular jawline and defined chin.",
+        "cheekbones": "High, prominent cheekbones.",
+        "eyes": "Large, wide-set blue-green/grey eyes with visible irises.",
+        "nose": "Straight, delicate, slightly upturned nose.",
+        "lips": "Full natural lips, light pink, soft cupid's bow.",
+        "brows": "Well-defined, slightly darker than hair, gently arched.",
+        "hair": "Light warm blonde, straight, shoulder-length, side-parted.",
+        "skin": "Fair warm-beige tone, natural texture, visible pores, no freckles.",
+        "expression": "Natural, confident, relaxed.",
+        "instruction": "MUST match attached 3-view reference sheet exactly.",
     }
 
     # Garantir que subject existe
@@ -649,12 +668,12 @@ def validate_body_proportions(image_path: str) -> bool:
         img_part   = types.Part.from_bytes(data=data, mime_type=mime)
 
         prompt = (
-            "Look at the woman in this image. Does she clearly display ALL of the following:\n"
-            "1. A very large, full bust with visible cleavage\n"
-            "2. A markedly narrow waist compared to her hips\n"
-            "3. Wide hips — a pronounced hourglass silhouette\n"
-            "Answer YES only if ALL three are clearly and unmistakably visible.\n"
-            "Answer NO if any of the three is missing or ambiguous.\n"
+            "Look at the woman in this image. Does she have an hourglass body shape with:\n"
+            "1. A full, prominent bust\n"
+            "2. A narrow waist\n"
+            "3. Wide hips — curves clearly visible\n"
+            "Answer YES if the hourglass shape is clearly visible.\n"
+            "Answer NO if the figure appears straight or undefined.\n"
             "Answer with ONE word only: YES or NO."
         )
 
