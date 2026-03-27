@@ -84,11 +84,11 @@ LOG_PATH              = "logs/run.log"
 # Si un modèle n'est pas dispo, utiliser le fallback :
 #   FALLBACK_IMAGE_MODEL = "gemini-1.5-pro"
 # ----------------------------------------------------------------
-GEMINI_MODEL_IMAGE           = "gemini-2.5-flash-image"                        # Génération image native (responseModalities IMAGE) — stable
-GEMINI_MODEL_IMAGE_PRO2      = "gemini-2.5-flash-image"                        # Génération image native (même modèle)
+GEMINI_MODEL_IMAGE           = "gemini-3-pro-image-preview"                        # Génération image native (responseModalities IMAGE) — stable
+GEMINI_MODEL_IMAGE_PRO2      = "gemini-3-pro-image-preview"                        # Génération image native (même modèle)
 GEMINI_MODEL_VISION          = "gemini-2.5-flash"                              # Analyse texte+vision (JSON, détection)
 GEMINI_MODEL_FALLBACK        = "gemini-2.5-flash"                              # Fallback stable texte+vision
-GEMINI_MODEL_INPAINTING      = "gemini-2.5-flash-image"                        # Inpainting natif — workflow inpainting
+GEMINI_MODEL_INPAINTING      = "gemini-3-pro-image-preview"                        # Inpainting natif — workflow inpainting
 # Modèles image alternatifs disponibles (vérifiés le 2026-03-27) :
 # "gemini-3.1-flash-image-preview"  — plus récent, preview
 # "gemini-3-pro-image-preview"      — fonctionne mais 500 INTERNAL intermittents
