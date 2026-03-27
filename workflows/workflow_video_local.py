@@ -34,13 +34,14 @@ Appelé par : main.py via --workflow video_local
 import json
 import os
 import random
+import re
 import shutil
 from pathlib import Path
 
 from caption_generator import generate_caption
 from concept_generator import build_caption_prompt, get_current_calendar_step
 from frame_extractor import extract_best_frame
-from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body
+from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body, validate_body_proportions
 from logger import get_logger, log_section, log_step
 from prompts import PROMPT_JSON_TO_IMAGE
 
@@ -49,6 +50,10 @@ logger = get_logger(__name__)
 # Extensions vidéo acceptées par Kling (mp4 et mov uniquement)
 VIDEO_EXTENSIONS = {".mp4", ".mov"}
 TOTAL_STEPS      = 5
+
+# Répertoire de staging des vagues de vidéos sources (organisées en v0-*, v1-*, ...)
+# Défini dans config.py — identique en local et sur VPS.
+from config import TEMP_VIDEOS_DIR
 
 
 # ================================================================
@@ -107,23 +112,28 @@ def _load_video_history() -> dict:
     Structure :
     {
       "cycle": 1,
+      "wave":  0,
       "used": [
         {"name": "video_01.mp4", "selected_at": "2026-03-24T09:45:00"}
       ]
     }
+
+    Le champ "wave" indique la dernière vague chargée depuis temp/videos/.
+    -1 signifie qu'aucune vague n'a encore été chargée.
     """
     from config import VIDEO_HISTORY_PATH
     try:
         with open(VIDEO_HISTORY_PATH, encoding="utf-8") as f:
             data = json.load(f)
-        # Validation minimale
         if "used" not in data:
             data["used"] = []
         if "cycle" not in data:
             data["cycle"] = 1
+        if "wave" not in data:
+            data["wave"] = -1
         return data
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"cycle": 1, "used": []}
+        return {"cycle": 1, "wave": -1, "used": []}
 
 
 def _save_video_history(history: dict) -> None:
@@ -147,7 +157,51 @@ def _mark_video_used(video_name: str) -> None:
         "selected_at": datetime.now().isoformat(timespec="seconds"),
     })
     _save_video_history(history)
-    logger.info(f"[video_history] '{video_name}' marquée comme utilisée (cycle {history['cycle']})")
+    logger.info(f"[video_history] '{video_name}' marquée comme utilisée (cycle {history['cycle']}, wave {history['wave']})")
+
+
+def _available_waves() -> list[int]:
+    """
+    Scanne temp/videos/ et retourne les indices de vagues disponibles
+    (fichiers préfixés vN- avec N entier).
+    """
+    temp_dir = Path(TEMP_VIDEOS_DIR)
+    if not temp_dir.exists():
+        return []
+    waves: set[int] = set()
+    for f in temp_dir.iterdir():
+        if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
+            m = re.match(r'^v(\d+)-', f.name, re.IGNORECASE)
+            if m:
+                waves.add(int(m.group(1)))
+    return sorted(waves)
+
+
+def _refill_from_wave(wave: int, videos_dir: str) -> int:
+    """
+    Déplace toutes les vidéos v{wave}-* depuis temp/videos/ vers data/videos/.
+
+    Les fichiers sont DÉPLACÉS (pas copiés) — temp/videos/ sert de réservoir
+    et se vide progressivement au fil des vagues.
+
+    Retourne le nombre de fichiers déplacés.
+    """
+    temp_dir = Path(TEMP_VIDEOS_DIR)
+    dest_dir = Path(videos_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    pattern = re.compile(rf'^v{wave}-', re.IGNORECASE)
+    moved   = 0
+
+    for f in list(temp_dir.iterdir()):
+        if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS and pattern.match(f.name):
+            dest = dest_dir / f.name
+            shutil.move(str(f), str(dest))
+            logger.info(f"[wave {wave}] Déplacée : {f.name} → {dest}")
+            moved += 1
+
+    logger.info(f"[wave {wave}] {moved} vidéo(s) chargée(s) dans {videos_dir}")
+    return moved
 
 
 def _pick_random_video(videos_dir: str, dry_run: bool = False) -> str:
@@ -155,58 +209,86 @@ def _pick_random_video(videos_dir: str, dry_run: bool = False) -> str:
     Sélectionne aléatoirement une vidéo non encore utilisée dans ce cycle.
 
     Comportement :
-    - Charge video_history.json pour connaître les vidéos déjà utilisées
-    - Filtre le pool pour n'offrir que les vidéos encore vierges
-    - Si toutes les vidéos ont été utilisées → réinitialise l'historique
-      (nouveau cycle) et repart du pool complet   → rotation automatique,
-      aucune intervention manuelle requise
-    - Enregistre la vidéo choisie dans l'historique AVANT de lancer le pipeline
-      (sauf si dry_run=True — aucune modification de video_history.json)
+    1. Si data/videos/ est vide OU toutes les vidéos ont été utilisées :
+       → Cherche la prochaine vague (vN-*) disponible dans temp/videos/
+       → Déplace ces fichiers vers data/videos/ (refill)
+       → Reset la liste "used" dans video_history.json
+    2. Si aucune vague disponible dans temp/videos/ :
+       → Recycle le pool actuel de data/videos/ (nouveau cycle)
+    3. Si data/videos/ est vide ET temp/videos/ vide → erreur claire
     """
     vdir = Path(videos_dir)
+    vdir.mkdir(parents=True, exist_ok=True)
 
-    if not vdir.exists():
-        raise FileNotFoundError(
-            f"Dossier vidéos introuvable : {vdir.absolute()}\n"
-            "Créer le dossier et y déposer des vidéos (.mp4, .mov, .webm)."
-        )
+    history  = _load_video_history()
+    used_set = {entry["name"] for entry in history.get("used", [])}
 
     all_videos = [
         f for f in vdir.iterdir()
         if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS
     ]
-
-    if not all_videos:
-        raise FileNotFoundError(
-            f"Aucune vidéo trouvée dans {videos_dir}. "
-            "Y déposer des fichiers .mp4 / .mov / .webm pour tester le pipeline."
-        )
-
-    history  = _load_video_history()
-    used_set = {entry["name"] for entry in history.get("used", [])}
-
     unused = [f for f in all_videos if f.name not in used_set]
 
+    # Pool épuisé (logiquement ou physiquement) → tenter un refill par vague
     if not unused:
-        # Toutes les vidéos ont été utilisées → nouveau cycle
-        new_cycle = history.get("cycle", 1) + 1
-        logger.info(
-            f"[video_history] Toutes les vidéos utilisées — "
-            f"réinitialisation (cycle {new_cycle}). "
-            f"{len(all_videos)} vidéos remises dans le pool."
-        )
-        history = {"cycle": new_cycle, "used": []}
-        _save_video_history(history)
-        unused = all_videos
+        waves = _available_waves()
+        current_wave = history.get("wave", -1)
+
+        # Prochaine vague : celle qui suit current_wave parmi les disponibles,
+        # avec wrap-around (si current=2 et waves=[0,1,2] → prochaine = 0).
+        next_wave = None
+        if waves:
+            candidates = [w for w in waves if w > current_wave]
+            next_wave  = candidates[0] if candidates else waves[0]  # wrap-around
+
+        if next_wave is not None and not dry_run:
+            moved = _refill_from_wave(next_wave, videos_dir)
+            if moved > 0:
+                all_videos = [
+                    f for f in vdir.iterdir()
+                    if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS
+                ]
+                new_cycle = history.get("cycle", 1) + 1
+                history   = {"cycle": new_cycle, "wave": next_wave, "used": []}
+                _save_video_history(history)
+                used_set  = set()
+                unused    = all_videos
+                logger.info(
+                    f"[wave {next_wave}] Pool rechargé — "
+                    f"{len(unused)} vidéo(s) disponibles (cycle {new_cycle})"
+                )
+
+        elif next_wave is not None and dry_run:
+            logger.info(
+                f"[DRY RUN] Prochaine vague disponible : v{next_wave} "
+                f"({len([f for f in Path(TEMP_VIDEOS_DIR).iterdir() if re.match(rf'^v{next_wave}-', f.name, re.IGNORECASE) and f.suffix.lower() in VIDEO_EXTENSIONS])} fichiers) — "
+                "aucun déplacement en dry-run"
+            )
+
+        # Toujours pas de vidéos non utilisées après tentative de refill
+        if not unused:
+            if all_videos:
+                # Aucune vague dispo → recycler le pool actuel (fallback safe)
+                new_cycle = history.get("cycle", 1) + 1
+                logger.info(
+                    f"[video_history] Aucune nouvelle vague — recyclage cycle {new_cycle} "
+                    f"({len(all_videos)} vidéo(s) remises dans le pool)"
+                )
+                history  = {"cycle": new_cycle, "wave": history.get("wave", -1), "used": []}
+                _save_video_history(history)
+                unused   = all_videos
+            else:
+                raise FileNotFoundError(
+                    f"Aucune vidéo dans {videos_dir} et aucune vague disponible dans {TEMP_VIDEOS_DIR}.\n"
+                    "Ajouter des fichiers .mp4/.mov dans temp/videos/ avec le préfixe v0-, v1-, etc."
+                )
 
     chosen = random.choice(unused)
     logger.info(
         f"Vidéo sélectionnée : {chosen.name} "
-        f"({len(unused) - 1} restantes dans le cycle courant)"
+        f"({len(unused) - 1} restantes, wave {history.get('wave', -1)})"
     )
 
-    # Marquer immédiatement comme utilisée (avant le pipeline)
-    # Ignoré en dry_run pour ne pas polluer l'historique lors des tests locaux.
     if dry_run:
         logger.info(f"[DRY RUN] video_history.json non modifié — '{chosen.name}' non marquée utilisée")
     else:
@@ -369,6 +451,20 @@ def _run_person_branch(
         return _run_ambiance_branch(video_path, frame_path, step)
     logger.info(f"Image Madison générée : {madison_image_path}")
 
+    # ── Validation proportions + retry unique ────────────────────
+    body_ok = validate_body_proportions(madison_image_path)
+    body_status = "✓ OK"
+    if not body_ok:
+        logger.warning("Proportions insuffisantes — 1 retry génération image...")
+        try:
+            madison_image_path, _ = generate_image(prompt_text)
+            body_ok    = validate_body_proportions(madison_image_path)
+            body_status = "⚠ Retry — ✓ OK" if body_ok else "⚠ Retry — non validé"
+        except ImageSafetyError:
+            logger.warning("IMAGE_SAFETY sur retry — fallback flux ambiance")
+            return _run_ambiance_branch(video_path, frame_path, step)
+    logger.info(f"Corps Madison : {body_status}")
+
     # Sauvegarder l'état intermédiaire avant Kling (recovery si erreur)
     _save_intermediate_state(madison_image_path, video_path, scene_json, step)
 
@@ -391,7 +487,7 @@ def _run_person_branch(
     caption        = generate_caption(caption_prompt)
 
     logger.info(f"=== Workflow Vidéo Local terminé (reel) : {final_video_path} ===")
-    return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path
+    return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path, body_status
 
 
 # ================================================================
@@ -418,7 +514,7 @@ def _run_ambiance_branch(
     caption        = generate_caption(caption_prompt)
 
     logger.info(f"=== Workflow Vidéo Local terminé (story/ambiance) : {video_path} ===")
-    return video_path, public_url, filename, caption, "story", "", ""
+    return video_path, public_url, filename, caption, "story", "", "", "N/A (flux ambiance)"
 
 
 # ================================================================

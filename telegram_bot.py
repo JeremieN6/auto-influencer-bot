@@ -527,7 +527,10 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     RUN_VIDEO_UPLOAD,
     RUN_I2V_SOURCE,
     RUN_I2V_PROMPT,
-) = range(15)
+    RUN_MC_IMAGE,
+    RUN_MC_VIDEO,
+    RUN_MC_WHAT,
+) = range(18)
 
 
 def _load_variables() -> dict:
@@ -568,8 +571,8 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             InlineKeyboardButton("✂️ Remplacer personnage", callback_data="manual_inpaint"),
         ],
         [
-            InlineKeyboardButton("🎬 Ta vidéo",             callback_data="video_upload"),
-            InlineKeyboardButton("🎬 Animer image",         callback_data="video_i2v"),
+            InlineKeyboardButton("🎬 Kling Motion Control",  callback_data="video_upload"),
+            InlineKeyboardButton("🎬 Kling I2V",                  callback_data="video_i2v"),
         ],
     ])
     await update.message.reply_text(
@@ -611,6 +614,23 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         )
         return RUN_RATIO
 
+    # Motion Control avec image Madison fournie manuellement (saute l'étape Gemini)
+    if workflow == "video_mc":
+        await query.edit_message_text(
+            "🎬 *Motion Control \+ Image*\n\n"
+            "⚠️ L'image envoyée doit *déjà ressembler à l'influenceuse*\n"
+            "\(générée via Gemini \— pas une photo quelconque\)\n\n"
+            "Pipeline :\n"
+            "  1\\. Tu fournis l'image de l'influenceuse\n"
+            "  2\\. Tu fournis la vidéo source \(les mouvements\)\n"
+            "  3\\. Kling transfère les mouvements sur l'image\n\n"
+            "⏱ Temps estimé : 5\\-12 minutes\n\n"
+            "📎 Envoie d'abord l'image de l'influenceuse en pièce jointe\n"
+            "ou /cancel pour annuler",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return RUN_MC_IMAGE
+
     # Image-to-Video : image influenceuse + prompt → Kling anime
     if workflow == "video_i2v":
         await query.edit_message_text(
@@ -627,21 +647,27 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         )
         return RUN_I2V_SOURCE
 
-    # Vidéo upload manuel → recevoir la vidéo en pièce jointe
+    # Kling Motion Control → demander ce que l'utilisateur a disponible
     if workflow == "video_upload":
-        ctx.user_data["run_workflow"] = "manual_video"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📹 Vidéo source seulement",        callback_data="mc_video_only")],
+            [InlineKeyboardButton("🖼️📹 Image + Vidéo source",          callback_data="mc_image_video")],
+            [InlineKeyboardButton("🖼️ Image seulement \(sans vidéo\)", callback_data="mc_image_only")],
+        ])
         await query.edit_message_text(
-            "🎬 *Ta vidéo \\(Kling Motion Control\\)*\n\n"
-            "Pipeline automatique :\n"
-            "  1\\. Extraction du meilleur frame\n"
-            "  2\\. Génération image influenceuse\n"
-            "  3\\. Transfert de mouvement via Kling\n\n"
-            "⏱ Temps estimé : 10\\-15 minutes\n\n"
-            "📎 Envoie ta vidéo en pièce jointe \\(\.mp4, \.mov\\)\n"
-            "ou /cancel pour annuler",
+            "🎬 *Kling Motion Control*\n\n"
+            "Qu'est\-ce que tu as disponible ?\n\n"
+            "📹 *Vidéo source seulement*\n"
+            "  → Gemini génère automatiquement l'image influenceuse avant Kling\n\n"
+            "🖼️📹 *Image \+ Vidéo source*\n"
+            "  → Tu fournis l'image \(⚠️ doit déjà ressembler à l'influenceuse\)\n"
+            "  \+ la vidéo source — Kling applique les mouvements directement\n\n"
+            "🖼️ *Image seulement \(sans vidéo\)*\n"
+            "  → Ce n'est pas le bon workflow — utilise plutôt *🎬 Vidéo*",
+            reply_markup=keyboard,
             parse_mode=ParseMode.MARKDOWN_V2,
         )
-        return RUN_VIDEO_UPLOAD
+        return RUN_MC_WHAT
 
     # Workflows manuels directs (source + prompt) — pas de personnalisation mood/location
     if workflow == "manual_gen":
@@ -966,6 +992,124 @@ async def run_i2v_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return RUN_RATIO
 
 
+async def run_mc_what(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Aiguille selon ce que l'utilisateur a : vidéo seule, image+vidéo, ou image seule."""
+    query = update.callback_query
+    await query.answer()
+    choice = query.data
+
+    if choice == "mc_image_only":
+        # Mauvais workflow — rediriger vers 🎬 Vidéo (Image-to-Video)
+        await query.edit_message_text(
+            "❌ *Ce n'est pas le bon workflow\\.* \\n\\n"
+            "*Kling Motion Control* nécessite une vidéo source pour les mouvements\\.\\n\\n"
+            "Reviens au menu et utilise le bouton *🎬 Vidéo* :\\n"
+            "\\→ Tu fournis ton image \\+ un prompt textuel qui décrit les mouvements\\n"
+            "\\→ Kling anime l'image directement, sans vidéo source\\n\\n"
+            "Tape /run pour revenir au menu\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        ctx.user_data.clear()
+        return ConversationHandler.END
+
+    if choice == "mc_video_only":
+        ctx.user_data["run_workflow"] = "manual_video"
+        await query.edit_message_text(
+            "📹 *Kling Motion Control — Vidéo source uniquement*\\n\\n"
+            "Gemini va générer l'image influenceuse automatiquement depuis le meilleur frame\\.\\n\\n"
+            "Pipeline :\\n"
+            "  1\\. Extraction du meilleur frame de ta vidéo\\n"
+            "  2\\. Gemini analyse la scène et génère l'image influenceuse\\n"
+            "  3\\. Kling transfère les mouvements\\n\\n"
+            "⏱ Temps estimé : 10\\-15 minutes\\n\\n"
+            "📤 Envoie ta vidéo source \\(\\.mp4, \\.mov\\)\\n"
+            "ou /cancel pour annuler",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return RUN_VIDEO_UPLOAD
+
+    if choice == "mc_image_video":
+        ctx.user_data["run_workflow"] = "video_mc"
+        await query.edit_message_text(
+            "🖼️📹 *Kling Motion Control — Image \\+ Vidéo source*\\n\\n"
+            "⚠️ L'image doit *déjà ressembler à l'influenceuse*\\n"
+            "\\(générée via Gemini — pas une photo quelconque\\)\\n\\n"
+            "Kling appliquera les mouvements de ta vidéo directement sur cette image\\.\\n\\n"
+            "⏱ Temps estimé : 5\\-12 minutes\\n\\n"
+            "📎 Envoie d'abord l'image de l'influenceuse en pièce jointe\\n"
+            "ou /cancel pour annuler",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return RUN_MC_IMAGE
+
+    return RUN_MC_WHAT  # choix inconnu, rester dans l'état
+
+
+async def run_mc_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit l'image Madison pour Motion Control manuel."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+    if not update.message.photo:
+        await _send_error(update, "Veuillez envoyer une photo en pièce jointe\.")
+        return RUN_MC_IMAGE
+    photo   = update.message.photo[-1]
+    tg_file = await photo.get_file()
+    dest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "temp",
+        f"run_mc_img_{photo.file_unique_id}.jpg",
+    )
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    await tg_file.download_to_drive(dest)
+    logger.info(f"Image Madison (motion control manuel) reçue : {dest}")
+    ctx.user_data.setdefault("run_override", {})["source_image"] = dest
+    await update.message.reply_text(
+        "✅ Image reçue\.\n\n"
+        "📤 *Envoie maintenant la vidéo source* \(\.mp4, \.mov\)\n"
+        "_C'est cette vidéo qui fournit les mouvements à transférer sur l'influenceuse\._ \n\n"
+        "ou /cancel pour annuler",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return RUN_MC_VIDEO
+
+
+async def run_mc_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Reçoit la vidéo source pour Motion Control manuel et lance le pipeline."""
+    if not _is_authorized(update):
+        return ConversationHandler.END
+
+    if update.message.video:
+        tg_file   = await update.message.video.get_file()
+        ext       = ".mp4"
+        unique_id = update.message.video.file_unique_id
+    elif update.message.document and (update.message.document.mime_type or "").startswith("video/"):
+        tg_file   = await update.message.document.get_file()
+        raw_name  = update.message.document.file_name or "video.mp4"
+        ext       = os.path.splitext(raw_name)[1] or ".mp4"
+        unique_id = update.message.document.file_unique_id
+    else:
+        await _send_error(update, "Format non reconnu\. Envoie un fichier \.mp4 ou \.mov\.")
+        return RUN_MC_VIDEO
+
+    dest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "temp",
+        f"run_mc_vid_{unique_id}{ext}",
+    )
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    await tg_file.download_to_drive(dest)
+    logger.info(f"Vidéo source (motion control manuel) reçue : {dest}")
+    ctx.user_data.setdefault("run_override", {})["source_path"] = dest
+    ctx.user_data["run_workflow"] = "video_mc"
+
+    await update.message.reply_text(
+        "✅ Vidéo reçue\.\n\n"
+        "🚀 *Pipeline lancé* — Kling va transférer les mouvements sur l'image\.\n"
+        "⏱ Résultat dans 5\-12 minutes\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    await _launch_run_pipeline(ctx)
+    return ConversationHandler.END
+
+
 async def run_video_upload_receive(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     """Reçoit la vidéo uploadée dans le flux /run → 🎬 Ta vidéo."""
     if not _is_authorized(update):
@@ -1082,6 +1226,17 @@ def _build_run_handler() -> ConversationHandler:
             RUN_RATIO:             [CallbackQueryHandler(run_choose_ratio, pattern="^(9:16|16:9|1:1)$")],
             RUN_I2V_SOURCE:        [MessageHandler(filters.PHOTO, run_i2v_source)],
             RUN_I2V_PROMPT:        [MessageHandler(filters.TEXT & ~filters.COMMAND, run_i2v_prompt)],
+            RUN_MC_IMAGE:          [MessageHandler(filters.PHOTO, run_mc_image)],
+            RUN_MC_VIDEO:          [
+                MessageHandler(filters.VIDEO, run_mc_video),
+                MessageHandler(
+                    filters.Document.MimeType("video/mp4") |
+                    filters.Document.MimeType("video/quicktime") |
+                    filters.Document.MimeType("video/x-msvideo"),
+                    run_mc_video,
+                ),
+            ],
+            RUN_MC_WHAT:           [CallbackQueryHandler(run_mc_what, pattern="^mc_(video_only|image_video|image_only)$")],
             RUN_VIDEO_UPLOAD:      [
                 MessageHandler(filters.VIDEO, run_video_upload_receive),
                 MessageHandler(

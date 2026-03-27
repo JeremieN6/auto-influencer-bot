@@ -105,6 +105,7 @@ NGINX_BASE_URL   = os.getenv("NGINX_BASE_URL",   "https://ton-domaine.com/output
 DATA_DIR              = "data"
 OUTPUTS_DIR           = "outputs"
 VIDEOS_DIR            = f"{DATA_DIR}/videos"
+TEMP_VIDEOS_DIR       = "temp/videos"         # Réservoir de vagues (v0-*, v1-*, ...) — même structure en local et sur VPS
 VARIABLES_PATH        = f"{DATA_DIR}/variables.json"
 HISTORY_PATH          = f"{DATA_DIR}/history.json"
 CALENDAR_PATH         = f"{DATA_DIR}/calendar.json"

@@ -34,7 +34,7 @@ from pathlib import Path
 from caption_generator import generate_caption
 from concept_generator import build_caption_prompt, get_current_calendar_step
 from frame_extractor import extract_best_frame
-from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body
+from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body, validate_body_proportions
 from logger import get_logger, log_section, log_step
 from prompts import PROMPT_JSON_TO_IMAGE
 
@@ -368,8 +368,30 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
                 + "\n\n[Instagram Story — ambiance vidéo, pas de personnage]"
             )
             caption = generate_caption(caption_prompt)
-            return video_path, public_url, filename, caption, "story", "", video_path
+            return video_path, public_url, filename, caption, "story", "", video_path, "N/A (IMAGE_SAFETY)"
         logger.info(f"Image Madison générée : {madison_image_path}")
+
+        # ── Validation proportions + retry unique ────────────────────
+        body_ok = validate_body_proportions(madison_image_path)
+        body_status = "✓ OK"
+        if not body_ok:
+            logger.warning("Proportions insuffisantes — 1 retry génération image...")
+            try:
+                madison_image_path, _ = generate_image(prompt_text)
+                body_ok    = validate_body_proportions(madison_image_path)
+                body_status = "⚠ Retry — ✓ OK" if body_ok else "⚠ Retry — non validé"
+            except ImageSafetyError:
+                logger.warning("IMAGE_SAFETY sur retry — fallback flux ambiance")
+                filename, public_url = _expose_video_via_nginx(video_path)
+                concept_hint = {"location": "aesthetic scene", "mood": "chill ambiance",
+                                "outfit": "", "lighting": "natural light"}
+                caption_prompt = (
+                    build_caption_prompt(concept_hint, step)
+                    + "\n\n[Instagram Story — ambiance vidéo, pas de personnage]"
+                )
+                caption = generate_caption(caption_prompt)
+                return video_path, public_url, filename, caption, "story", "", video_path, "N/A (IMAGE_SAFETY retry)"
+        logger.info(f"Corps Madison : {body_status}")
 
         log_step(__name__, 5, TOTAL_STEPS, "Kling Motion Control")
         from kling_generator import build_motion_prompt, generate_video_motion_control
@@ -384,7 +406,7 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         caption = generate_caption(_build_video_caption_prompt(scene_json, step, "reel"))
 
         logger.info(f"=== Workflow Vidéo Pinterest terminé (reel) : {final_video_path} ===")
-        return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path
+        return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path, body_status
 
     else:
         # ── Branche Ambiance → Story ─────────────────────────────────
@@ -412,4 +434,4 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         caption = generate_caption(caption_prompt)
 
         logger.info(f"=== Workflow Vidéo Pinterest terminé (story) : {video_path} ===")
-        return video_path, public_url, filename, caption, "story", "", video_path
+        return video_path, public_url, filename, caption, "story", "", video_path, "N/A (flux ambiance)"

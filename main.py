@@ -268,7 +268,7 @@ def run_pipeline(
             # (sanitisation du prompt sur la même vidéo — évite de brûler une 2ème vidéo)
             _esf()
             try:
-                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept, dry_run=dry_run)
+                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status = run_video_workflow(concept, dry_run=dry_run)
             except _ImgSafetyErr:
                 raise ValueError("IMAGE_SAFETY/OTHER persistant sur video_local — abandon")
             finally:
@@ -285,7 +285,7 @@ def run_pipeline(
             from workflows.workflow_video_pinterest import run as run_video_workflow  # type: ignore[assignment]
             keyword_pool_type = step.get("type", "reel")  # "story" ou "reel"
             log("info", "main", f"Pool keywords vidéo : {keyword_pool_type}")
-            video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = run_video_workflow(concept, pool_type=keyword_pool_type)
+            video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status = run_video_workflow(concept, pool_type=keyword_pool_type)
         if workflow == "manual_video":
             source_path = (override_params or {}).get("source_path")
             if not source_path:
@@ -293,12 +293,12 @@ def run_pipeline(
             from workflows.workflow_video_local import run_from_path as _run_video_manual
             from image_generator import ImageSafetyError as _ImgSafetyErr2, enable_safety_fallback as _esf2, disable_safety_fallback as _dsf2
             try:
-                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = _run_video_manual(source_path, concept)
+                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status = _run_video_manual(source_path, concept)
             except _ImgSafetyErr2:
                 log("warning", "main", "IMAGE_SAFETY/OTHER sur manual_video — activation fallback sanitisé")
                 _esf2()
                 try:
-                    video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path = _run_video_manual(source_path, concept)
+                    video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status = _run_video_manual(source_path, concept)
                 except _ImgSafetyErr2:
                     raise ValueError("IMAGE_SAFETY/OTHER persistant sur manual_video — abandon")
                 finally:
@@ -338,6 +338,7 @@ def run_pipeline(
                 f"{madison_line}"
                 f"  Vidéo générée   : {video_path}\n"
                 f"  Type            : {video_type}\n"
+                f"  Corps Madison   : {body_status}\n"
                 f"{sep}"
             )
             log("info", "main", f"[DRY RUN] Caption :\n{caption}")
@@ -428,12 +429,85 @@ def run_pipeline(
         log_section("main", "PIPELINE VIDEO I2V TERMINÉ")
         return video_state
 
+    elif workflow == "video_mc":
+        # Motion Control avec image Madison fournie manuellement (saute l'étape Gemini)
+        log("info", "main", "=== Workflow vidéo : video_mc (Motion Control + image manuelle) ===")
+        madison_image_path = (override_params or {}).get("source_image")
+        source_video_path  = (override_params or {}).get("source_path")
+
+        if not madison_image_path:
+            raise ValueError("video_mc requiert 'source_image' dans override_params")
+        if not source_video_path:
+            raise ValueError("video_mc requiert 'source_path' dans override_params")
+
+        from kling_generator import generate_video_motion_control as _gen_mc
+        video_path = _gen_mc(
+            character_image_path=madison_image_path,
+            source_video_path=source_video_path,
+        )
+        video_filename = os.path.basename(video_path)
+
+        from config import NGINX_BASE_URL as _nginx_url2
+        if "ton-domaine.com" not in _nginx_url2:
+            from kling_generator import _expose_file_via_nginx as _expose2
+            video_public_url = _expose2(video_path)
+        else:
+            video_public_url = ""
+
+        from caption_generator import generate_caption as _gen_caption2
+        from concept_generator import build_caption_prompt as _build_prompt2
+        caption_prompt = _build_prompt2(concept)
+        caption = _gen_caption2(caption_prompt)
+
+        video_type = "reel"
+        log("info", "main", f"Vidéo mc générée : {video_path}")
+        log("info", "main", f"Caption : {caption[:100]}...")
+
+        video_state = {
+            "media_type":         "video",
+            "video_path":         video_path,
+            "video_public_url":   video_public_url,
+            "video_filename":     video_filename,
+            "caption":            caption,
+            "video_type":         video_type,
+            "_intermediate":      False,
+            "madison_image_path": madison_image_path,
+            "source_video_path":  source_video_path,
+            "image_path":     None,
+            "public_url":     None,
+            "image_filename": None,
+            "concept":        concept,
+            "step":           step,
+            "last_prompt":    None,
+        }
+
+        if dry_run:
+            log("info", "main", "[DRY RUN] — Pas d'envoi Telegram, pas de sauvegarde historique")
+            log("info", "main",
+                f"\n{'═'*60}\n"
+                f"  DRY RUN — WORKFLOW VIDEO MC\n"
+                f"{'═'*60}\n"
+                f"  Image Madison   : {madison_image_path}\n"
+                f"  Vidéo source    : {source_video_path}\n"
+                f"  Vidéo générée   : {video_path}\n"
+                f"{'═'*60}"
+            )
+            log("info", "main", f"[DRY RUN] Caption :\n{caption}")
+        else:
+            save_pending_state(video_state)
+            log("info", "main", "pending_state video_mc sauvegardé")
+            asyncio.run(send_video_for_validation(video_path, caption, video_type))
+            log("info", "main", "Vidéo mc envoyée sur Telegram — en attente de validation")
+
+        log_section("main", "PIPELINE VIDEO MC TERMINÉ")
+        return video_state
+
     else:
         raise ValueError(
             f"Workflow inconnu : '{workflow}'. "
             "Valeurs acceptées : 'pinterest', 'pinterest_inpainting', 'generatif', "
             "'video_local', 'video_pinterest', 'manual_image', 'manual_video', "
-            "'manual_gen', 'manual_inpaint', 'video_i2v'"
+            "'manual_gen', 'manual_inpaint', 'video_i2v', 'video_mc'"
         )
     log("info", "main", f"Image générée : {local_path}")
 

@@ -150,10 +150,10 @@ def _save_image_from_response(response, filename: str) -> str:
                 f"Réponse complète : {response}"
             )
         if "IMAGE_OTHER" in finish_reason_str:
-            raise ValueError(
-                f"Gemini a retourné IMAGE_OTHER — le modèle ne supporte peut-être pas "
-                f"la génération d'image, ou quota épuisé ({finish_reason_str}). "
-                f"Vérifier GEMINI_MODEL_IMAGE dans config.py. "
+            raise ImageSafetyError(
+                f"Gemini a retourné IMAGE_OTHER ({finish_reason_str}) — "
+                f"filtrage contenu non-SAFETY (prompt+image reference triggering policy). "
+                f"Fallback sanitisation activé si disponible. "
                 f"Réponse complète : {response}"
             )
         raise ValueError(
@@ -630,8 +630,47 @@ def inject_madison_body(scene_json: dict) -> dict:
 
 
 # ================================================================
-# Workflow génératif V2 — build JSON + génération image
+# Validation proportions corps (post-génération)
 # ================================================================
+
+def validate_body_proportions(image_path: str) -> bool:
+    """
+    Validation rapide via Gemini Vision : la femme générée a-t-elle bien
+    les proportions de Madison (grande poitrine + hourglass prononcé) ?
+
+    Returns:
+        True  — proportions correctes (ou erreur API → on accepte)
+        False — proportions insuffisantes → workflow déclenche 1 retry
+    """
+    logger.info(f"Validation proportions corps : {image_path}")
+    try:
+        img        = Image.open(image_path).copy()
+        data, mime = _pil_to_bytes(img)
+        img_part   = types.Part.from_bytes(data=data, mime_type=mime)
+
+        prompt = (
+            "Look at the woman in this image. Does she clearly display ALL of the following:\n"
+            "1. A very large, full bust with visible cleavage\n"
+            "2. A markedly narrow waist compared to her hips\n"
+            "3. Wide hips — a pronounced hourglass silhouette\n"
+            "Answer YES only if ALL three are clearly and unmistakably visible.\n"
+            "Answer NO if any of the three is missing or ambiguous.\n"
+            "Answer with ONE word only: YES or NO."
+        )
+
+        response = _client.models.generate_content(
+            model=GEMINI_MODEL_VISION,
+            contents=[prompt, img_part],
+        )
+        answer = (response.text or "").strip().upper()
+        result = answer.startswith("YES")
+        logger.info(f"Validation proportions : {'✓ OK' if result else '✗ ÉCHOUÉ'} (réponse Gemini : {answer[:20]})")
+        return result
+
+    except Exception as e:
+        # En cas d'erreur API (quota, timeout...) on accepte l'image pour ne pas bloquer
+        logger.warning(f"Validation proportions impossible : {e} — image acceptée par défaut")
+        return True
 
 # Lookup tables : mappe les valeurs simples de variables.json
 # vers les champs détaillés attendus par MADISON_JSON_TEMPLATE.
