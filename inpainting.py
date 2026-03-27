@@ -51,14 +51,26 @@ _client = genai.Client(api_key=GEMINI_API_KEY)
 # Template prompt inpainting
 # ================================================================
 
-INPAINTING_PROMPT_TEMPLATE = """Replace the person in the masked area with {influencer_name}.
-Use the attached face reference sheet for exact facial features, skin tone and likeness.
-Use the attached body reference sheet for exact body proportions and silhouette.
-Preserve all lighting, shadows, background, color grading and environment from the original image.
-Match the original photo's perspective and atmosphere exactly.
-The result must look like {influencer_name} was always in this scene.
-Photorealistic, natural, seamless integration. 4K quality.
-Do not modify anything outside the masked area."""
+INPAINTING_PROMPT_TEMPLATE = """You are performing image inpainting. Task: replace ONLY the person in the white masked region with {influencer_name}.
+
+OUTPUT REQUIREMENT: A SINGLE seamless photo — same framing and composition as the source image.
+Do NOT produce a reference sheet, a 3-panel sheet, or any multi-view composite. ONE photo only.
+
+FACE — use the FIRST attached reference image for {influencer_name}'s exact facial features. Match 1:1.
+BODY — use the SECOND attached reference image for {influencer_name}'s exact body proportions and silhouette.
+
+PRESERVE UNCHANGED from the source photo:
+• The same pose, body angle and gesture of the original subject
+• The same outfit and clothing — exact same garments
+• Full background, environment and all objects/props
+• Lighting: direction, intensity and color temperature
+• Shadows and reflections on the ground and surroundings
+• Camera angle, depth of field and framing
+• Color grading and overall atmosphere
+• Every pixel OUTSIDE the masked area — completely untouched
+
+The final image must look as if {influencer_name} was always naturally in this scene.
+Photorealistic, seamless, 4K quality."""
 
 
 # ================================================================

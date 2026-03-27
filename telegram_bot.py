@@ -155,8 +155,7 @@ async def send_for_validation(
         f"──────────────────\n"
         f"✅ /validate — Publier sur Instagram\n"
         f"✏️  /modify \\[instruction\\] — Régénérer avec modification\n"
-        f"🔄 /generate — Nouveau concept aléatoire\n"
-        f"📅 /schedule — Voir le calendrier"
+        f"🗑️ /supprimer — Supprimer \\(ne pas publier\\)"
     )
 
     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
@@ -252,6 +251,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"/status — État du système\n"
         f"/validate — Publier l'image en attente\n"
         f"/modify \\[instruction\\] — Régénérer avec modification\n"
+        f"/supprimer — Supprimer le contenu en attente\n"
         f"/generate — Nouveau concept aléatoire\n"
         f"/schedule — Calendrier des 4 prochains posts\n"
         f"/manualGeneration — Générer depuis une image ou vidéo source\n"
@@ -410,6 +410,19 @@ async def cmd_modify(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.error(f"Erreur régénération image : {e}")
         await _send_error(update, f"Erreur régénération : {e}")
+
+
+async def cmd_discard(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Supprimer le contenu en attente sans publier — /supprimer"""
+    if not _is_authorized(update):
+        return
+    state = load_pending_state()
+    if not state.get("image_path") and not state.get("video_path"):
+        await _send_error(update, "Aucun contenu en attente à supprimer.")
+        return
+    clear_pending_state()
+    await update.message.reply_text("🗑 Contenu supprimé — aucune publication effectuée.")
+    logger.info("Contenu en attente supprimé via /supprimer")
 
 
 async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -893,7 +906,7 @@ async def run_manual_gen_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
 
 
 async def run_inpaint_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    """Reçoit la photo source pour le mode inpaint."""
+    """Reçoit la photo source pour le mode inpaint et lance directement le pipeline."""
     if not _is_authorized(update):
         return ConversationHandler.END
     if not update.message.photo:
@@ -909,14 +922,15 @@ async def run_inpaint_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     await tg_file.download_to_drive(dest)
     logger.info(f"Image source (inpaint) reçue : {dest}")
     ctx.user_data.setdefault("run_override", {})["source_path"] = dest
+    ctx.user_data["run_override"]["prompt"] = ""
+    ctx.user_data["run_workflow"] = "manual_inpaint"
     await update.message.reply_text(
-        "✅ Image source reçue\\.\n\n"
-        "📝 *Prompt personnalisé ?* \\(optionnel\\)\n"
-        "_Par défaut : l'influenceuse remplace le personnage en gardant décor \\+ lumière_\n\n"
-        "Envoie ton prompt ou tape */skip* pour utiliser le prompt par défaut\\.",
+        "✅ Image reçue — remplacement du personnage en cours\\.\n\n"
+        "🚀 Pipeline lancé\\. Résultat dans 1\\-2 minutes\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
-    return RUN_INPAINT_PROMPT
+    await _launch_run_pipeline(ctx)
+    return ConversationHandler.END
 
 
 async def run_inpaint_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1642,6 +1656,7 @@ def start_bot() -> None:
     app.add_handler(CommandHandler("generate", cmd_generate))
     app.add_handler(CommandHandler("schedule", cmd_schedule))
     app.add_handler(CommandHandler("retryKling", cmd_retry_kling))
+    app.add_handler(CommandHandler("supprimer",    cmd_discard))
     app.add_handler(_build_run_handler())
 
     # Callbacks publication vidéo (indépendants de la conversation /run)
