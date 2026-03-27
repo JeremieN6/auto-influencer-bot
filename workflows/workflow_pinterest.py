@@ -32,7 +32,7 @@ Appelé par : main.run_pipeline(workflow="pinterest")
 import json
 import os
 
-from image_generator import generate_image, image_to_json, inject_madison_body
+from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body, validate_body_proportions
 from logger import get_logger, log_section, log_step
 from prompts import PROMPT_JSON_TO_IMAGE
 
@@ -109,6 +109,22 @@ def run(concept: dict, keyword_pool: list[str] | None = None) -> tuple[str, str,
         scene_json=json.dumps(scene_json, indent=2, ensure_ascii=False)
     )
     local_path, public_url = generate_image(prompt_text)
+
+    # ── Validation proportions + retry unique ────────────────────
+    # Même logique que workflow_video_local : Gemini peut ignorer les consignes
+    # corporelles à la première génération. Si les proportions hourglass ne sont
+    # pas respectées on relance une fois avant d'accepter.
+    body_ok = validate_body_proportions(local_path)
+    if not body_ok:
+        logger.warning("Proportions corps insuffisantes — 1 retry génération image...")
+        try:
+            local_path, public_url = generate_image(prompt_text)
+            body_ok = validate_body_proportions(local_path)
+            logger.info(f"Proportions après retry : {'✓ OK' if body_ok else '⚠ non validé (accepté quand même)'}")
+        except ImageSafetyError:
+            logger.warning("IMAGE_SAFETY sur retry proportions — image initiale conservée")
+    else:
+        logger.info("Proportions corps : ✓ OK")
 
     filename = os.path.basename(local_path)
     logger.info(f"=== Workflow Pinterest terminé : {local_path} ===")
