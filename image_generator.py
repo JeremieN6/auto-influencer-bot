@@ -302,13 +302,16 @@ def disable_safety_fallback() -> None:
 # Génération d'image (prompt + référence)
 # ================================================================
 
-def generate_image(prompt_text: str, max_retries: int = 3) -> tuple[str, str]:
+def generate_image(prompt_text: str, max_retries: int = 3, aspect_ratio: str | None = None) -> tuple[str, str]:
     """
     Génère une image via Gemini à partir d'un prompt texte et de l'image de référence.
 
     Args:
-        prompt_text : prompt décrivant la scène (construit par workflow_pinterest)
-        max_retries : nombre de tentatives si Gemini ne retourne pas d'image (défaut : 3)
+        prompt_text  : prompt décrivant la scène (construit par workflow_pinterest)
+        max_retries  : nombre de tentatives si Gemini ne retourne pas d'image (défaut : 3)
+        aspect_ratio : ratio cible transmis à Gemini via ImageGenerationConfig.
+                       Valeurs supportées : "9:16", "16:9", "1:1", "4:5", "3:4", etc.
+                       Si None, Gemini choisit le format par défaut (16:9 landscape).
 
     Returns:
         (chemin_local, url_publique_nginx)
@@ -322,7 +325,8 @@ def generate_image(prompt_text: str, max_retries: int = 3) -> tuple[str, str]:
     logger.debug(f"Prompt (extrait) : {prompt_text[:200]}...")
 
     ref_part      = _load_ref_image_part()
-    current_prompt   = prompt_text
+    aspect_hint   = f"\n\nIMPORTANT: Generate this image in portrait orientation ({aspect_ratio} aspect ratio, taller than wide)." if aspect_ratio else ""
+    current_prompt   = prompt_text + aspect_hint
     safety_sanitized = False
 
     last_error: Exception | None = None
@@ -375,6 +379,7 @@ def generate_image_from_source(
     prompt_text: str,
     source_image_path: str,
     max_retries: int = 3,
+    aspect_ratio: str | None = None,
 ) -> tuple[str, str]:
     """
     Génère une image via Gemini en combinant prompt + image source (style) + référence influenceuse.
@@ -411,7 +416,8 @@ def generate_image_from_source(
     # Charger la référence de l'influenceuse
     ref_part = _load_ref_image_part()
 
-    current_prompt   = prompt_text
+    aspect_hint   = f"\n\nIMPORTANT: Generate this image in portrait orientation ({aspect_ratio} aspect ratio, taller than wide)." if aspect_ratio else ""
+    current_prompt   = prompt_text + aspect_hint
     safety_sanitized = False
     last_error: Exception | None = None
 
@@ -988,7 +994,11 @@ def generate_image_from_concept(concept: dict, calendar_step: dict, max_retries:
     logger.info(f"Génération image depuis concept — modèle : {GEMINI_MODEL_IMAGE_PRO2}")
 
     json_scene, wildcard = build_madison_json(concept, calendar_step)
-    final_prompt = PROMPT_JSON_TO_IMAGE.format(scene_json=json_scene)
+    aspect_ratio = "9:16" if calendar_step.get("format") == "story" else "4:5"
+    final_prompt = (
+        PROMPT_JSON_TO_IMAGE.format(scene_json=json_scene)
+        + f"\n\nIMPORTANT: Generate this image in portrait orientation ({aspect_ratio} aspect ratio, taller than wide)."
+    )
     ref_part     = _load_ref_image_part()
 
     last_error: Exception | None = None

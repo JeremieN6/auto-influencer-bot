@@ -31,6 +31,8 @@ import random
 import shutil
 from pathlib import Path
 
+from PIL import Image as _PILImage
+
 from caption_generator import generate_caption
 from concept_generator import build_caption_prompt, get_current_calendar_step
 from frame_extractor import extract_best_frame
@@ -232,6 +234,29 @@ async def _scrape_pinterest_video(query: str) -> str:
         raise RuntimeError(f"Erreur download vidéo Pinterest : {e}") from e
 
 
+def _crop_to_portrait_9_16(image_path: str) -> str:
+    """
+    Si l'image générée est landscape, la recadre en portrait 9:16 (centre-crop).
+    Retourne le chemin de l'image (inchangé si déjà portrait).
+
+    Kling Motion Control utilise les dimensions de l'image character pour définir
+    l'aspect ratio de la vidéo de sortie → une image landscape produit une vidéo
+    landscape, quelle que soit l'orientation de la vidéo source.
+    """
+    img = _PILImage.open(image_path)
+    w, h = img.size
+    if h >= w:
+        return image_path  # déjà portrait ou carré
+
+    target_h = h
+    target_w = int(h * 9 / 16)
+    left  = (w - target_w) // 2
+    cropped = img.crop((left, 0, left + target_w, target_h))
+    cropped.save(image_path, "JPEG", quality=95)
+    logger.info(f"Image recadrée portrait 9:16 : {w}x{h} → {target_w}x{target_h} ({image_path})")
+    return image_path
+
+
 # ================================================================
 # Helpers (réutilisés depuis workflow_video_local)
 # ================================================================
@@ -370,6 +395,7 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
             caption = generate_caption(caption_prompt)
             return video_path, public_url, filename, caption, "story", "", video_path, "N/A (IMAGE_SAFETY)"
         logger.info(f"Image Madison générée : {madison_image_path}")
+        madison_image_path = _crop_to_portrait_9_16(madison_image_path)
 
         # ── Validation proportions + retry unique ────────────────────
         body_ok = validate_body_proportions(madison_image_path)
@@ -378,6 +404,7 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
             logger.warning("Proportions insuffisantes — 1 retry génération image...")
             try:
                 madison_image_path, _ = generate_image(prompt_text)
+                madison_image_path = _crop_to_portrait_9_16(madison_image_path)
                 body_ok    = validate_body_proportions(madison_image_path)
                 body_status = "⚠ Retry — ✓ OK" if body_ok else "⚠ Retry — non validé"
             except ImageSafetyError:
