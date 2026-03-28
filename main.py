@@ -734,7 +734,22 @@ Exemples :
             "Sans cette option, le pool est déduit automatiquement du calendrier éditorial."
         ),
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help=(
+            "Forcer le pipeline même si le dernier run date de moins de MIN_DAYS_BETWEEN_RUNS jours. "
+            "Utilisé par les commandes Telegram manuelles (/generate, /run)."
+        ),
+    )
     return parser.parse_args()
+
+
+# Délai minimal entre deux runs cron consécutifs (en jours).
+# Protège contre le bug de timing du cron */4 (ex: 28 mars → 29 mars).
+# Les appels manuels avec --force ignorent ce garde-fou.
+MIN_DAYS_BETWEEN_RUNS = 3
 
 
 if __name__ == "__main__":
@@ -757,6 +772,32 @@ if __name__ == "__main__":
                 _os.remove(args.override_params)
             except Exception:
                 pass
+
+    # ── Guard anti-double-run (protection cron timing) ──────────
+    # Ignore si : dry_run, --force, --resume-kling, ou premier run (historique vide)
+    if not args.dry_run and not args.force and not args.resume_kling:
+        import json as _json_guard
+        from datetime import datetime as _dt_guard
+        from pathlib import Path as _guard_path
+        _history_file = _guard_path(__file__).parent / "data" / "history.json"
+        try:
+            with open(_history_file, encoding="utf-8") as _hf:
+                _hist_guard = _json_guard.load(_hf)
+            if _hist_guard:
+                _last_run = _dt_guard.fromisoformat(_hist_guard[-1].get("generated_at", ""))
+                _elapsed_days = (_dt_guard.now() - _last_run).total_seconds() / 86400
+                if _elapsed_days < MIN_DAYS_BETWEEN_RUNS:
+                    log(
+                        "info", "main",
+                        f"Guard anti-double-run : dernier run il y a {_elapsed_days:.1f}j "
+                        f"(< {MIN_DAYS_BETWEEN_RUNS}j minimum) — pipeline ignoré.\n"
+                        f"Utiliser --force pour forcer malgré tout.",
+                    )
+                    sys.exit(0)
+        except FileNotFoundError:
+            pass  # Pas d'historique → premier run, on proceed
+        except Exception as _guard_err:
+            log("warning", "main", f"Guard anti-double-run : erreur lecture history ({_guard_err}) — proceed anyway")
 
     # ── Mode reprise Kling (--resume-kling) ─────────────────────
     if args.resume_kling:

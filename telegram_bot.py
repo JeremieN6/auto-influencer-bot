@@ -494,10 +494,11 @@ async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         # Déclencher le pipeline en subprocess (séparation de process)
+        # --force ignore le guard anti-double-run (l'utilisateur demande explicitement)
         python_exe = sys.executable
         script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
         proc = subprocess.Popen(
-            [python_exe, script_path],
+            [python_exe, script_path, "--force"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -1282,7 +1283,7 @@ async def _launch_run_pipeline(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     python_exe  = sys.executable
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
 
-    cmd = [python_exe, script_path, "--workflow", workflow, "--override-params", params_path]
+    cmd = [python_exe, script_path, "--no-persist", "--force", "--workflow", workflow, "--override-params", params_path]
     from config import LOG_PATH as _LOG_PATH
     _log_abs = os.path.join(os.path.dirname(os.path.abspath(__file__)), _LOG_PATH)
     os.makedirs(os.path.dirname(_log_abs), exist_ok=True)
