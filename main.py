@@ -103,6 +103,7 @@ def run_pipeline(
     dry_run: bool = False,
     relevant: str | None = None,
     persist: bool = True,
+    pool: str | None = None,
 ) -> dict:
     """
     Exécute le pipeline complet de génération de contenu.
@@ -260,6 +261,7 @@ def run_pipeline(
     elif workflow in ("video_local", "video_pinterest", "manual_video"):
         # Workflows vidéo — la caption est générée DANS le workflow
         log("info", "main", f"=== Workflow vidéo : {workflow} ===")
+        search_query_used = ""  # sera renseigné uniquement par video_pinterest
 
         if workflow == "video_local":
             from workflows.workflow_video_local import run as run_video_workflow
@@ -283,9 +285,25 @@ def run_pipeline(
                 log("info", "main", "Plus de vidéos locales — prochains runs via calendrier")
         else:
             from workflows.workflow_video_pinterest import run as run_video_workflow  # type: ignore[assignment]
-            keyword_pool_type = step.get("type", "reel")  # "story" ou "reel"
-            log("info", "main", f"Pool keywords vidéo : {keyword_pool_type}")
-            video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status = run_video_workflow(concept, pool_type=keyword_pool_type)
+            if pool in ("reel", "story"):
+                # Pool explicitement fourni via --pool → priorité absolue
+                keyword_pool_type = pool
+                log("info", "main", f"Pool keywords vidéo : {keyword_pool_type} (--pool explicite)")
+            else:
+                # Dériver du calendrier, avec fallback reel si step incompatible (ex: feed)
+                step_type = step.get("type", "reel")
+                if step_type in ("story", "reel"):
+                    keyword_pool_type = step_type
+                else:
+                    log(
+                        "warning",
+                        "main",
+                        f"Step calendrier '{step_type}' incompatible pour video_pinterest — fallback pool 'reel'",
+                    )
+                    keyword_pool_type = "reel"
+                log("info", "main", f"Pool keywords vidéo : {keyword_pool_type} (calendrier step={step_type})")
+            video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status, _search_queries = run_video_workflow(concept, pool_type=keyword_pool_type)
+            search_query_used = " | ".join(_search_queries) if _search_queries else ""
         if workflow == "manual_video":
             source_path = (override_params or {}).get("source_path")
             if not source_path:
@@ -330,10 +348,12 @@ def run_pipeline(
             sep = "═" * 60
             madison_line = f"  Image Madison   : {madison_image_path}\n" if madison_image_path else ""
             source_line  = f"  Vidéo source    : {source_video_path}\n" if source_video_path else ""
+            keywords_line = f"  Mots-clés       : {search_query_used}\n" if search_query_used else ""
             log("info", "main",
                 f"\n{sep}\n"
                 f"  DRY RUN — WORKFLOW VIDÉO\n"
                 f"{sep}\n"
+                f"{keywords_line}"
                 f"{source_line}"
                 f"{madison_line}"
                 f"  Vidéo générée   : {video_path}\n"
@@ -702,6 +722,18 @@ Exemples :
         default=False,
         help="Reprendre depuis un état intermédiaire — relancer uniquement l'étape Kling.",
     )
+    parser.add_argument(
+        "--pool",
+        choices=["reel", "story"],
+        default=None,
+        metavar="POOL",
+        help=(
+            "Pour --workflow video_pinterest : sélectionne explicitement le pool de mots-clés. "
+            "'reel' → pinterest_video_tags_reel (mots-clés avec personnage). "
+            "'story' → pinterest_video_tags_story (mots-clés ambiance, sans personnage). "
+            "Sans cette option, le pool est déduit automatiquement du calendrier éditorial."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -771,6 +803,7 @@ if __name__ == "__main__":
             dry_run=args.dry_run,
             relevant=args.relevant,
             persist=not args.no_persist,
+            pool=args.pool,
         )
         sys.exit(0)
     except KeyboardInterrupt:
