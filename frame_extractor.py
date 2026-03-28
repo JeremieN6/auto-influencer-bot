@@ -97,6 +97,78 @@ def _get_video_duration(video_path: str) -> float:
     return 10.0  # fallback
 
 
+
+def check_min_shot_duration(video_path: str, min_seconds: float = 3.0) -> bool:
+    """
+    Vérifie que la vidéo contient au moins un plan continu de `min_seconds` secondes.
+
+    Kling Motion Control exige ≥3s de mouvement continu. Les vidéos Pinterest
+    avec des cuts rapides (montage clip) sont rejetées avec :
+    "The duration of continuous valid motion is too short; it should last at least 3 second."
+
+    Méthode : détection de scènes par différence de pixels (select='gt(scene,0.35)').
+    Contrairement aux I-frames (keyframes d'encodage insérées toutes les ~0.5s sans
+    rapport avec les vrais changements de plan), cette approche détecte uniquement les
+    vraies coupures visuelles.
+
+    Args:
+        video_path  : chemin vers le fichier vidéo
+        min_seconds : durée minimale requise en secondes (défaut 3.0)
+
+    Returns:
+        True  → au moins un plan dure ≥ min_seconds (vidéo exploitable)
+        False → tous les plans durent < min_seconds (rejeter cette vidéo)
+    """
+    ffmpeg_exe = _get_ffmpeg_exe()
+    duration   = _get_video_duration(video_path)
+
+    # Si la vidéo est trop courte en elle-même, inutile d'analyser
+    if duration < min_seconds:
+        logger.info(f"check_min_shot_duration : durée totale {duration:.1f}s < {min_seconds}s → REJET")
+        return False
+
+    # Détecter les coupures de scènes réelles par différence de pixels
+    # select='gt(scene,0.35)' → frame sélectionnée si changement > 35% par rapport à la précédente
+    # showinfo → écrit pts_time de chaque frame sélectionnée dans stderr
+    cmd = [
+        ffmpeg_exe,
+        "-i", video_path,
+        "-vf", "select=gt(scene\\,0.35),showinfo",
+        "-vsync", "0",
+        "-f", "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        output = result.stderr
+
+        # pts_time des frames où une coupure a été détectée = timestamps de début de chaque plan
+        cut_times = [float(m) for m in re.findall(r"pts_time:([\d.]+)", output)]
+
+        if not cut_times:
+            # Aucune coupure détectée → vidéo continue sur toute sa durée → OK
+            logger.info(
+                f"check_min_shot_duration : aucune coupure détectée sur {duration:.1f}s → OK"
+            )
+            return True
+
+        # Construire la liste complète des bornes de plans : 0 + timestamps de cuts + durée totale
+        boundaries = sorted(set([0.0] + cut_times + [duration]))
+        intervals  = [boundaries[i + 1] - boundaries[i] for i in range(len(boundaries) - 1)]
+        max_shot   = max(intervals)
+
+        ok = max_shot >= min_seconds
+        logger.info(
+            f"check_min_shot_duration : {len(cut_times)} coupure(s) détectée(s), "
+            f"plan max={max_shot:.2f}s (seuil={min_seconds}s) → {'OK' if ok else 'REJET'}"
+        )
+        return ok
+
+    except Exception as e:
+        logger.warning(f"check_min_shot_duration : erreur analyse ({e}) — supposé OK")
+        return True  # en cas d'échec technique, ne pas bloquer le pipeline
+
+
 def _extract_frame_at(video_path: str, timestamp: float, output_path: str) -> bool:
     """
     Extrait une frame à un timestamp précis (secondes).

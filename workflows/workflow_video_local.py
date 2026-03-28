@@ -469,8 +469,9 @@ def _run_person_branch(
     prompt_text = PROMPT_JSON_TO_IMAGE.format(
         scene_json=json.dumps(scene_json, indent=2, ensure_ascii=False)
     )
+    # Générer directement en portrait 9:16 pour éviter un crop agressif (→ rejet Kling)
     try:
-        madison_image_path, _ = generate_image(prompt_text)
+        madison_image_path, _ = generate_image(prompt_text, aspect_ratio="9:16")
     except ImageSafetyError:
         # Gemini refuse l'image Madison même après prompt sanitisé → publier la vidéo
         # source brute comme Story (flux ambiance) plutôt qu'abandonner le run.
@@ -480,7 +481,7 @@ def _run_person_branch(
         )
         return _run_ambiance_branch(video_path, frame_path, step)
     logger.info(f"Image Madison générée : {madison_image_path}")
-    madison_image_path = _crop_to_portrait_9_16(madison_image_path)
+    madison_image_path = _crop_to_portrait_9_16(madison_image_path)  # safety net si Gemini ignore le ratio
 
     # ── Validation proportions + retry unique ────────────────────
     body_ok = validate_body_proportions(madison_image_path)
@@ -488,7 +489,7 @@ def _run_person_branch(
     if not body_ok:
         logger.warning("Proportions insuffisantes — 1 retry génération image...")
         try:
-            madison_image_path, _ = generate_image(prompt_text)
+            madison_image_path, _ = generate_image(prompt_text, aspect_ratio="9:16")
             madison_image_path = _crop_to_portrait_9_16(madison_image_path)
             body_ok    = validate_body_proportions(madison_image_path)
             body_status = "⚠ Retry — ✓ OK" if body_ok else "⚠ Retry — non validé"

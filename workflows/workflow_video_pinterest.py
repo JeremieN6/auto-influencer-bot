@@ -35,7 +35,7 @@ from PIL import Image as _PILImage
 
 from caption_generator import generate_caption
 from concept_generator import build_caption_prompt, get_current_calendar_step
-from frame_extractor import extract_best_frame
+from frame_extractor import check_min_shot_duration, extract_best_frame
 from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body, validate_body_proportions
 from logger import get_logger, log_section, log_step
 from prompts import PROMPT_JSON_TO_IMAGE
@@ -59,8 +59,6 @@ def _build_video_query(variables: dict, pool_type: str = "reel") -> str:
 
     Format : pool_tag (+ keyword person optionnel si pool reel)
     """
-    from pinterest_scraper import _VIDEO_PERSON_KEYWORDS
-
     pool_key = "pinterest_video_tags_reel" if pool_type == "reel" else "pinterest_video_tags_story"
     video_tags = variables.get(pool_key) or variables.get("pinterest_video_tags", {})
     if not video_tags:
@@ -69,16 +67,9 @@ def _build_video_query(variables: dict, pool_type: str = "reel") -> str:
     tag_values = list(video_tags.values())
     chosen_tag = random.choice(tag_values)
 
-    # Pour le pool reel : ajouter un keyword personnage dans 80% des cas
-    person_kw = ""
-    if pool_type == "reel" and random.random() < 0.8:
-        person_kw = random.choice(_VIDEO_PERSON_KEYWORDS)
-        # Déduplication
-        tag_words    = set(chosen_tag.lower().split())
-        person_words = [w for w in person_kw.split() if w.lower() not in tag_words]
-        person_kw    = " ".join(person_words)
-
-    query = f"{chosen_tag} {person_kw}".strip()
+    # Règle : ≤ 4 mots par requête Pinterest (évite les requêtes trop spécifiques)
+    words = chosen_tag.split()
+    query = " ".join(words[:4])
     logger.info(f"Requête Pinterest vidéo ({pool_type}) : '{query}'")
     return query
 
@@ -319,39 +310,92 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
     log_section(__name__, "WORKFLOW VIDÉO PINTEREST")
     step = get_current_calendar_step()
 
-    # ── Étape 1/5 : Construire la requête + scraper Pinterest ───
-    log_step(__name__, 1, TOTAL_STEPS, "Scraping vidéo Pinterest")
-
     with open(Path(__file__).parent.parent / "data" / "variables.json", encoding="utf-8") as f:
         variables = _json.load(f)
 
-    query      = _build_video_query(variables, pool_type=pool_type)
-    video_path = asyncio.run(_scrape_pinterest_video(query))
-    logger.info(f"Vidéo Pinterest récupérée : {video_path}")
+    # ── Scraping + détection personnage (avec retry si pool reel) ──
+    # Quand pool_type == "reel", on veut une vidéo avec personnage.
+    # Pinterest ne garantit pas qu'un résultat contient un humain,
+    # même avec des mots-clés orientés "girl". On retente donc
+    # jusqu'à MAX_REEL_RETRIES fois avec une nouvelle requête.
+    MAX_REEL_RETRIES = 3
+    has_person    = False
+    video_path    = ""
+    frame_path    = ""
+    queries_tried : list[str] = []
 
-    # ── Étape 2/5 : Extraction frame intelligente ───────────────
-    log_step(__name__, 2, TOTAL_STEPS, "Extraction frame intelligente (scan multi-timestamps)")
-    frame_path = extract_best_frame(video_path)
-    logger.info(f"Frame extraite : {frame_path}")
+    for attempt in range(1, MAX_REEL_RETRIES + 1):
+        # ── Étape 1/5 : Construire la requête + scraper Pinterest ───
+        log_step(__name__, 1, TOTAL_STEPS, f"Scraping vidéo Pinterest (tentative {attempt}/{MAX_REEL_RETRIES})")
 
-    # ── Étape 3/5 : Détection personnage ────────────────────────
-    log_step(__name__, 3, TOTAL_STEPS, "Détection personnage (Gemini Vision)")
-    from pinterest_scraper import _detect_person_in_image
-    has_person = _detect_person_in_image(frame_path)
-    logger.info(f"Personnage détecté : {has_person}")
+        query      = _build_video_query(variables, pool_type=pool_type)
+        queries_tried.append(query)
+        video_path = asyncio.run(_scrape_pinterest_video(query))
+        logger.info(f"Vidéo Pinterest récupérée : {video_path}")
 
-    if has_person:
-        # ── Vérification upper body (requis par Kling Motion Control) ───────
-        from pinterest_scraper import _detect_upper_body_visible
-        has_upper_body = _detect_upper_body_visible(frame_path)
-        logger.info(f"Upper body complet visible : {has_upper_body}")
-
-        if not has_upper_body:
+        # ── Vérification plans continus (requis par Kling ≥ 3s) ─────
+        if not check_min_shot_duration(video_path, min_seconds=3.0):
             logger.warning(
-                "Upper body non visible dans la vidéo source — "
-                "fallback branche story (évite rejet Kling : 'No complete upper body detected')"
+                "Vidéo Pinterest rejetée : montage trop rapide (aucun plan ≥ 3s) — "
+                "Kling refuserait cette source."
             )
-            has_person = False
+            if attempt < MAX_REEL_RETRIES:
+                # Supprimer uniquement si on va retenter — la branche story en a besoin sinon
+                if os.path.exists(video_path):
+                    os.remove(video_path)
+                continue
+            else:
+                # Dernière tentative aussi rejetée : garder la vidéo pour le fallback story
+                # (la branche story publie la vidéo brute, Kling n'est pas impliqué)
+                logger.warning("Toutes les vidéos avaient des cuts trop rapides — fallback story (vidéo conservée)")
+                break
+
+        # ── Étape 2/5 : Extraction frame intelligente ───────────────
+        log_step(__name__, 2, TOTAL_STEPS, "Extraction frame intelligente (scan multi-timestamps)")
+        frame_path = extract_best_frame(video_path)
+        logger.info(f"Frame extraite : {frame_path}")
+
+        # ── Étape 3/5 : Détection personnage ────────────────────────
+        log_step(__name__, 3, TOTAL_STEPS, "Détection personnage (Gemini Vision)")
+        from pinterest_scraper import _detect_person_in_image
+        has_person = _detect_person_in_image(frame_path)
+        logger.info(f"Personnage détecté : {has_person}")
+
+        if has_person:
+            # ── Vérification upper body (requis par Kling Motion Control) ───────
+            from pinterest_scraper import _detect_upper_body_visible
+            has_upper_body = _detect_upper_body_visible(frame_path)
+            logger.info(f"Upper body complet visible : {has_upper_body}")
+
+            if not has_upper_body:
+                logger.warning(
+                    "Upper body non visible dans la vidéo source — "
+                    "fallback branche story (évite rejet Kling : 'No complete upper body detected')"
+                )
+                has_person = False
+
+        if has_person:
+            break  # vidéo exploitable trouvée
+
+        # Pool story : pas besoin de personnage, on accepte directement
+        if pool_type == "story":
+            break
+
+        # Pool reel : pas de personnage → nettoyer et retenter
+        if attempt < MAX_REEL_RETRIES:
+            logger.warning(
+                f"Pool reel : aucun personnage détecté (tentative {attempt}/{MAX_REEL_RETRIES}) — "
+                f"nouvelle vidéo..."
+            )
+            # Nettoyer les fichiers temporaires de cette tentative
+            for tmp in [frame_path, video_path]:
+                if tmp and os.path.exists(tmp):
+                    os.remove(tmp)
+        else:
+            logger.warning(
+                f"Pool reel : aucun personnage après {MAX_REEL_RETRIES} tentatives — "
+                f"fallback story"
+            )
 
     if has_person:
         # ── Branche Personnage → Motion Control ─────────────────
@@ -376,8 +420,9 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         prompt_text = PROMPT_JSON_TO_IMAGE.format(
             scene_json=json.dumps(scene_json, indent=2, ensure_ascii=False)
         )
+        # Générer directement en portrait 9:16 pour éviter un crop agressif (→ rejet Kling)
         try:
-            madison_image_path, _ = generate_image(prompt_text)
+            madison_image_path, _ = generate_image(prompt_text, aspect_ratio="9:16")
         except ImageSafetyError:
             # Gemini refuse l'image Madison même après prompt sanitisé → basculer
             # en flux ambiance (vidéo source brute, type=story) plutôt qu'abandonner.
@@ -393,9 +438,9 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
                 + "\n\n[Instagram Story — ambiance vidéo, pas de personnage]"
             )
             caption = generate_caption(caption_prompt)
-            return video_path, public_url, filename, caption, "story", "", video_path, "N/A (IMAGE_SAFETY)"
+            return video_path, public_url, filename, caption, "story", "", video_path, "N/A (IMAGE_SAFETY)", queries_tried
         logger.info(f"Image Madison générée : {madison_image_path}")
-        madison_image_path = _crop_to_portrait_9_16(madison_image_path)
+        madison_image_path = _crop_to_portrait_9_16(madison_image_path)  # safety net si Gemini ignore le ratio
 
         # ── Validation proportions + retry unique ────────────────────
         body_ok = validate_body_proportions(madison_image_path)
@@ -403,7 +448,7 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         if not body_ok:
             logger.warning("Proportions insuffisantes — 1 retry génération image...")
             try:
-                madison_image_path, _ = generate_image(prompt_text)
+                madison_image_path, _ = generate_image(prompt_text, aspect_ratio="9:16")
                 madison_image_path = _crop_to_portrait_9_16(madison_image_path)
                 body_ok    = validate_body_proportions(madison_image_path)
                 body_status = "⚠ Retry — ✓ OK" if body_ok else "⚠ Retry — non validé"
@@ -417,7 +462,7 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
                     + "\n\n[Instagram Story — ambiance vidéo, pas de personnage]"
                 )
                 caption = generate_caption(caption_prompt)
-                return video_path, public_url, filename, caption, "story", "", video_path, "N/A (IMAGE_SAFETY retry)"
+                return video_path, public_url, filename, caption, "story", "", video_path, "N/A (IMAGE_SAFETY retry)", queries_tried
         logger.info(f"Corps Madison : {body_status}")
 
         log_step(__name__, 5, TOTAL_STEPS, "Kling Motion Control")
@@ -433,7 +478,7 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         caption = generate_caption(_build_video_caption_prompt(scene_json, step, "reel"))
 
         logger.info(f"=== Workflow Vidéo Pinterest terminé (reel) : {final_video_path} ===")
-        return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path, body_status
+        return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path, body_status, queries_tried
 
     else:
         # ── Branche Ambiance → Story ─────────────────────────────────
@@ -461,4 +506,4 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         caption = generate_caption(caption_prompt)
 
         logger.info(f"=== Workflow Vidéo Pinterest terminé (story) : {video_path} ===")
-        return video_path, public_url, filename, caption, "story", "", video_path, "N/A (flux ambiance)"
+        return video_path, public_url, filename, caption, "story", "", video_path, "N/A (flux ambiance)", queries_tried
