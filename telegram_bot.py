@@ -68,6 +68,11 @@ def _escape_md(text: str) -> str:
 
 def save_pending_state(state: dict) -> None:
     """Persiste le pending_state dans data/pending_state.json."""
+    # Auto-estampille created_at lors du premier enregistrement d'un vrai contenu
+    if (state.get("image_path") or state.get("video_path") or state.get("_intermediate")) \
+            and not state.get("created_at"):
+        from datetime import datetime
+        state = {**state, "created_at": datetime.now().isoformat()}
     os.makedirs(os.path.dirname(PENDING_STATE_PATH), exist_ok=True)
     with open(PENDING_STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
@@ -114,7 +119,39 @@ def _empty_state() -> dict:
         "madison_image_path": None,
         "source_video_path":  None,
         "scene_json":         None,
+        # —— métadonnées ——
+        "created_at":         None,   # horodatage ISO de création du pending
     }
+
+
+# ================================================================
+# Helpers pending state
+# ================================================================
+
+def _has_pending_content(state: dict) -> bool:
+    """Retourne True si un contenu est en attente de validation."""
+    return bool(
+        state.get("image_path")
+        or state.get("video_path")
+        or state.get("_intermediate")
+    )
+
+
+def _format_age(created_at_iso: str | None) -> str:
+    """Retourne une string lisible (MarkdownV2-escaped) de l'âge du pending state."""
+    if not created_at_iso:
+        return ""
+    try:
+        from datetime import datetime
+        total_mins = int((datetime.now() - datetime.fromisoformat(created_at_iso)).total_seconds() / 60)
+        if total_mins < 60:
+            return f" \\(il y a {total_mins} min\\)"
+        hours, mins = divmod(total_mins, 60)
+        if hours < 24:
+            return f" \\(il y a {hours}h{mins:02d}\\)"
+        return f" \\(il y a {hours // 24}j\\)"
+    except Exception:
+        return ""
 
 
 # ================================================================
@@ -294,6 +331,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         next_str = "Aucun post enregistré — premier run à venir"
 
     has_pending = bool(state.get("image_path"))
+    age_str = _format_age(state.get("created_at"))
 
     if state.get("_intermediate"):
         madison_name = _escape_md(os.path.basename(state.get("madison_image_path") or "?"))
@@ -307,13 +345,13 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         vid_type = _escape_md(state.get("video_type") or "vidéo")
         caption_preview = _escape_md(str(state.get('caption', ''))[:80])
         pending_str = (
-            f"\u2705 Vidéo \\({vid_type}\\) en attente de validation\n"
+            f"\u2705 Vidéo \\({vid_type}\\) en attente de validation{age_str}\n"
             f"   Caption : {caption_preview}\\.\\.\\."
         )
     elif has_pending:
         caption_preview = _escape_md(str(state.get('caption', ''))[:80])
         pending_str = (
-            f"\u2705 Image en attente de validation\n"
+            f"\u2705 Image en attente de validation{age_str}\n"
             f"   Caption : {caption_preview}\\.\\.\\."
         )
     else:
@@ -326,6 +364,22 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"📈 Total posts historique : {len(history)}"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+
+    # Envoyer l'aperçu visuel du contenu en attente
+    img_path = state.get("image_path")
+    vid_path = state.get("video_path")
+    if img_path and os.path.exists(img_path):
+        try:
+            with open(img_path, "rb") as _photo:
+                await update.message.reply_photo(photo=_photo, caption="📸 Aperçu du contenu en attente")
+        except Exception as _e:
+            logger.warning(f"Impossible d'envoyer le thumbnail image : {_e}")
+    elif vid_path and os.path.exists(vid_path):
+        try:
+            with open(vid_path, "rb") as _vid:
+                await update.message.reply_video(video=_vid, caption="🎬 Aperçu du contenu en attente")
+        except Exception as _e:
+            logger.warning(f"Impossible d'envoyer le thumbnail vidéo : {_e}")
 
 
 async def cmd_validate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -426,7 +480,17 @@ async def cmd_discard(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update):
+        return
 
+    state = load_pending_state()
+    if _has_pending_content(state):
+        await update.message.reply_text(
+            "⚠️ Un contenu est déjà en attente de validation\\.\ \n\n"
+            "Valide\\-le avec /validate ou supprime\\-le avec /supprimer avant de générer\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
 
     try:
         # Déclencher le pipeline en subprocess (séparation de process)
@@ -566,6 +630,15 @@ def _make_keyboard(options: list[str], cols: int = 2) -> InlineKeyboardMarkup:
 async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     """Lancement manuel avec choix workflow et paramètres — /run"""
     if not _is_authorized(update):
+        return ConversationHandler.END
+
+    state = load_pending_state()
+    if _has_pending_content(state):
+        await update.message.reply_text(
+            "⚠️ Un contenu est déjà en attente de validation\\.\ \n\n"
+            "Valide\\-le avec /validate ou supprime\\-le avec /supprimer avant de générer\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
         return ConversationHandler.END
 
     keyboard = InlineKeyboardMarkup([
@@ -1282,6 +1355,15 @@ def _build_run_handler() -> ConversationHandler:
 async def cmd_manual_generation(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     """Point d'entrée /manualGeneration — demande le type de contenu."""
     if not _is_authorized(update):
+        return ConversationHandler.END
+
+    state = load_pending_state()
+    if _has_pending_content(state):
+        await update.message.reply_text(
+            "⚠️ Un contenu est déjà en attente de validation\\.\ \n\n"
+            "Valide\\-le avec /validate ou supprime\\-le avec /supprimer avant de générer\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
         return ConversationHandler.END
 
     keyboard = InlineKeyboardMarkup([[
