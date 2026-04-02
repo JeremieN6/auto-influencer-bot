@@ -756,6 +756,54 @@ if __name__ == "__main__":
     setup_logger()
     args = _parse_args()
 
+    # ── Guard anti-run-simultané (lock file) ────────────────────
+    # Vérifie si un autre pipeline est déjà en cours d'exécution.
+    # En cas de conflit, envoie une notification Telegram et exit.
+    # Ignoré en --dry-run (pas d'effet de bord réel).
+    _LOCK_FILE = None
+    if not args.dry_run:
+        from pathlib import Path as _LockPath
+        _LOCK_FILE = _LockPath(__file__).parent / "data" / ".pipeline.lock"
+        _lock_conflict = False
+
+        if _LOCK_FILE.exists():
+            try:
+                _existing_pid = int(_LOCK_FILE.read_text().strip())
+                os.kill(_existing_pid, 0)  # signal 0 = vérifie existence process
+                _lock_conflict = True
+            except (ValueError, ProcessLookupError, PermissionError):
+                # PID invalide ou process mort → lock fantôme, on nettoie
+                _LOCK_FILE.unlink(missing_ok=True)
+
+        if _lock_conflict:
+            log("warning", "main",
+                f"Guard lock : un pipeline est déjà en cours (PID {_existing_pid}) — abandon.")
+            try:
+                import asyncio as _al_lock
+                from telegram import Bot as _BotLock
+                from config import TELEGRAM_BOT_TOKEN as _tok_lock, TELEGRAM_CHAT_ID as _cid_lock
+
+                async def _notify_conflict() -> None:
+                    async with _BotLock(token=_tok_lock) as _bot_lock:
+                        await _bot_lock.send_message(
+                            chat_id=_cid_lock,
+                            text=(
+                                f"⚠️ *Pipeline déjà en cours* \\(PID `{_existing_pid}`\\)\n\n"
+                                f"Un nouveau run a été ignoré \\(cron ou commande manuelle\\)\\.\n"
+                                f"Si le pipeline semble bloqué, supprime le verrou :\n"
+                                f"`rm /opt/mybots/auto\\-influencer\\-bot/data/\\.pipeline\\.lock`"
+                            ),
+                            parse_mode="MarkdownV2",
+                        )
+
+                _al_lock.run(_notify_conflict())
+            except Exception as _lock_notify_err:
+                log("warning", "main", f"Notification Telegram lock échouée : {_lock_notify_err}")
+            sys.exit(0)
+
+        # Acquérir le lock
+        _LOCK_FILE.write_text(str(os.getpid()))
+
     # Charger les override_params depuis le fichier temp écrit par /run ou /retryKling
     override_params: dict | None = None
     if args.override_params:
@@ -799,75 +847,84 @@ if __name__ == "__main__":
         except Exception as _guard_err:
             log("warning", "main", f"Guard anti-double-run : erreur lecture history ({_guard_err}) — proceed anyway")
 
-    # ── Mode reprise Kling (--resume-kling) ─────────────────────
-    if args.resume_kling:
-        if not override_params:
-            log("error", "main", "--resume-kling requiert --override-params PATH avec les données de reprise")
-            sys.exit(1)
+    try:
+        # ── Mode reprise Kling (--resume-kling) ─────────────────────
+        if args.resume_kling:
+            if not override_params:
+                log("error", "main", "--resume-kling requiert --override-params PATH avec les données de reprise")
+                sys.exit(1)
+            try:
+                run_resume_kling(override_params, dry_run=args.dry_run)
+                sys.exit(0)
+            except KeyboardInterrupt:
+                sys.exit(0)
+            except Exception as e:
+                log("error", "main", f"Erreur reprise Kling : {e}")
+                try:
+                    import asyncio as _asyncio
+                    from telegram import Bot
+                    from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+                    async def _notify_kling_error() -> None:
+                        async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+                            await bot.send_message(
+                                chat_id=TELEGRAM_CHAT_ID,
+                                text=f"🔴 *Erreur retry Kling*\n\n`{str(e)[:500]}`",
+                                parse_mode="MarkdownV2",
+                            )
+
+                    _asyncio.run(_notify_kling_error())
+                except Exception:
+                    pass
+                sys.exit(1)
+
+        # Résolution du workflow "auto"
+        selected_workflow = args.workflow
+        if selected_workflow == "auto":
+            from concept_generator import get_current_calendar_step
+            _step = get_current_calendar_step()
+            selected_workflow = _select_workflow(_step)
+            log("info", "main", f"Mode auto — workflow sélectionné : {selected_workflow} (step type={_step.get('type')})")
+
         try:
-            run_resume_kling(override_params, dry_run=args.dry_run)
+            run_pipeline(
+                workflow=selected_workflow,
+                override_params=override_params,
+                dry_run=args.dry_run,
+                relevant=args.relevant,
+                persist=not args.no_persist,
+                pool=args.pool,
+            )
             sys.exit(0)
         except KeyboardInterrupt:
+            log("info", "main", "Pipeline interrompu par l'utilisateur")
             sys.exit(0)
         except Exception as e:
-            log("error", "main", f"Erreur reprise Kling : {e}")
+            log("error", "main", f"Erreur fatale pipeline : {e}")
+            # Tentative de notification Telegram en cas d'erreur fatale
             try:
                 import asyncio as _asyncio
                 from telegram import Bot
                 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
-                async def _notify_kling_error() -> None:
+                async def _notify_error() -> None:
                     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
                         await bot.send_message(
                             chat_id=TELEGRAM_CHAT_ID,
-                            text=f"🔴 *Erreur retry Kling*\n\n`{str(e)[:500]}`",
+                            text=f"🔴 *Erreur pipeline main\\.py*\n\n`{str(e)[:500]}`",
                             parse_mode="MarkdownV2",
                         )
 
-                _asyncio.run(_notify_kling_error())
-            except Exception:
-                pass
+                _asyncio.run(_notify_error())
+            except Exception as notify_err:
+                log("error", "main", f"Notification Telegram d'erreur également échouée : {notify_err}")
+
             sys.exit(1)
 
-    # Résolution du workflow "auto"
-    selected_workflow = args.workflow
-    if selected_workflow == "auto":
-        from concept_generator import get_current_calendar_step
-        _step = get_current_calendar_step()
-        selected_workflow = _select_workflow(_step)
-        log("info", "main", f"Mode auto — workflow sélectionné : {selected_workflow} (step type={_step.get('type')})")
-
-    try:
-        run_pipeline(
-            workflow=selected_workflow,
-            override_params=override_params,
-            dry_run=args.dry_run,
-            relevant=args.relevant,
-            persist=not args.no_persist,
-            pool=args.pool,
-        )
-        sys.exit(0)
-    except KeyboardInterrupt:
-        log("info", "main", "Pipeline interrompu par l'utilisateur")
-        sys.exit(0)
-    except Exception as e:
-        log("error", "main", f"Erreur fatale pipeline : {e}")
-        # Tentative de notification Telegram en cas d'erreur fatale
-        try:
-            import asyncio as _asyncio
-            from telegram import Bot
-            from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-
-            async def _notify_error() -> None:
-                async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
-                    await bot.send_message(
-                        chat_id=TELEGRAM_CHAT_ID,
-                        text=f"🔴 *Erreur pipeline main\\.py*\n\n`{str(e)[:500]}`",
-                        parse_mode="MarkdownV2",
-                    )
-
-            _asyncio.run(_notify_error())
-        except Exception as notify_err:
-            log("error", "main", f"Notification Telegram d'erreur également échouée : {notify_err}")
-
-        sys.exit(1)
+    finally:
+        # Libérer le lock dans tous les cas (succès, erreur, KeyboardInterrupt)
+        if _LOCK_FILE is not None:
+            try:
+                _LOCK_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
