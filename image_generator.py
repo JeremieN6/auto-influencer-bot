@@ -559,24 +559,31 @@ def inject_madison_body(scene_json: dict) -> dict:
     except Exception:
         pass  # fallback silencieux sur "top garment"
 
-    # Nettoyer les références aux proportions corporelles dans les descriptions
-    # de vêtements — elles viendraient contaminer le prompt final et faire dérailler
-    # les proportions de Madison (bug confirmé sur video_03_lipsync).
+    # Nettoyer les références aux proportions corporelles dans TOUT le JSON source.
+    # Ces termes venant de la vidéo/image Pinterest contaminent le prompt final et
+    # font dérailler les proportions de Madison ou déclenchent IMAGE_SAFETY quand
+    # ils s'accumulent avec les descriptions corps injectées ci-dessous.
     _BODY_CUE_WORDS = [
         "slim", "slender", "petite", "thin", "skinny", "toned", "athletic",
-        "lean", "small bust", "flat", "curvy", "plus size", "voluptuous",
-        "large frame", "small frame", "big", "tiny waist", "showing off figure",
-        "body", "figure", "silhouette", "proportions", "measurements",
+        "lean", "small bust", "flat chest", "flat stomach", "curvy", "plus size",
+        "voluptuous", "large frame", "small frame", "tiny waist", "showing off figure",
+        "hourglass", "silhouette", "proportions", "measurements",
+        # Termes anatomiques sensibles qui s'accumulent avec inject_madison_body
+        "large breast", "big breast", "huge breast", "enormous breast",
+        "large chest", "big chest", "full chest", "heavy chest",
+        "cleavage", "busty", "buxom", "curvaceous",
+        "wide hips", "full hips", "round hips", "big butt", "large butt",
+        "round butt", "big glutes", "ample", "generously",
     ]
+
+    import re as _re
+
     def _strip_body_cues(text: str) -> str:
         if not isinstance(text, str):
             return text
         lowered = text.lower()
-        # Supprimer les phrases entières contenant des mots corporels
-        import re as _re
         for word in _BODY_CUE_WORDS:
             if word in lowered:
-                # Retirer la portion de phrase contenant le mot (jusqu'à , ou .)
                 text = _re.sub(
                     rf'[^,.]* {_re.escape(word)}[^,.]*[,.]?',
                     '',
@@ -586,16 +593,26 @@ def inject_madison_body(scene_json: dict) -> dict:
                 lowered = text.lower()
         return text.strip()
 
-    # Appliquer le nettoyage sur les champs de vêtements du JSON source
+    # Clés à NE PAS nettoyer : elles seront remplacées entièrement par les blocs Madison
+    _SKIP_KEYS = {"body", "face", "description"}
+
+    def _deep_strip(obj: object, parent_key: str = "") -> object:
+        """Parcourt récursivement le JSON et nettoie chaque string hors clés Madison."""
+        if parent_key in _SKIP_KEYS:
+            return obj
+        if isinstance(obj, str):
+            return _strip_body_cues(obj)
+        if isinstance(obj, dict):
+            return {k: _deep_strip(v, parent_key=k) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_deep_strip(item) for item in obj]
+        return obj
+
     try:
-        clothing = enriched.get("subject", {}).get("clothing", {})
-        if clothing:
-            if "outfit_description" in clothing:
-                clothing["outfit_description"] = _strip_body_cues(clothing["outfit_description"])
-            if "style" in clothing:
-                clothing["style"] = _strip_body_cues(clothing["style"])
-    except Exception:
-        pass
+        enriched = _deep_strip(enriched)  # type: ignore[assignment]
+        logger.debug("_deep_strip applied — body cues nettoyés sur tout le JSON source")
+    except Exception as _e:
+        logger.warning(f"_deep_strip échoué (non bloquant) : {_e}")
 
     # Bloc corps fixe — formules anatomiques gagnantes (termes validés par Gemini dans JSON context)
     madison_body = {
