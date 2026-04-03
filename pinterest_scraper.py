@@ -131,19 +131,34 @@ def _build_query(
     """
     Construit une requête Pinterest courte depuis le concept.
 
-    Structure : [pinterest_tag location] + [keyword personnage]
-    Les mots dupliqués entre les deux parties sont automatiquement supprimés.
+    MODE --relevant (keyword_pool fourni) :
+        Utilise UNIQUEMENT un keyword du pool (ignore pinterest_tags location).
+        Query = un seul keyword tiré aléatoirement, limité à 4 mots max.
+
+    MODE standard (keyword_pool = None) :
+        Structure : [pinterest_tag location] + [keyword personnage]
+        Les mots dupliqués entre les deux parties sont automatiquement supprimés.
 
     Args:
         concept          : dict du concept courant (contient "location")
         boost_person_kw  : forcer un keyword personnage précis (fallback stratégie 2).
                            Si None, pioche dans keyword_pool ou _PERSON_KEYWORDS.
         keyword_pool     : pool de mots-clés alternatifs (mode --relevant).
-                           Si fourni, remplace _PERSON_KEYWORDS comme source de pioche.
+                           Si fourni, utilise UNIQUEMENT ces keywords (ignore location).
 
     Returns:
         str : requête prête à encoder dans l'URL Pinterest
     """
+    # ── MODE --relevant : utiliser UNIQUEMENT le keyword pool ──────
+    if keyword_pool:
+        keyword = boost_person_kw or random.choice(keyword_pool)
+        # Limiter à 4 mots maximum
+        words = keyword.split()[:4]
+        query = " ".join(words)
+        logger.info(f"Requête Pinterest (mode --relevant) : '{query}'")
+        return query
+
+    # ── MODE standard : combiner pinterest_tag + keyword ───────────
     import json
     from pathlib import Path
 
@@ -155,8 +170,7 @@ def _build_query(
     location_str = concept.get("location", "").lower()
     location_tag = pinterest_tags.get(location_str, location_str.split()[0] if location_str else "")
 
-    pool = keyword_pool if keyword_pool else _PERSON_KEYWORDS
-    person_kw = boost_person_kw or random.choice(pool)
+    person_kw = boost_person_kw or random.choice(_PERSON_KEYWORDS)
 
     # Déduplication : supprimer du person_kw les mots déjà présents dans location_tag
     location_words = set(location_tag.lower().split())
@@ -166,8 +180,12 @@ def _build_query(
     ]
     person_kw_clean = " ".join(person_words_deduped)
 
-    query = f"{location_tag} {person_kw_clean}".strip()
-    logger.info(f"Requête Pinterest : '{query}'")
+    # Combiner et limiter à 4 mots max
+    combined = f"{location_tag} {person_kw_clean}".strip()
+    words = combined.split()[:4]
+    query = " ".join(words)
+
+    logger.info(f"Requête Pinterest (mode standard) : '{query}'")
     return query
 
 
@@ -345,27 +363,56 @@ async def _scrape_async(concept: dict, keyword_pool: list[str] | None = None) ->
         (local_path, source_url, search_query)
 
     Stratégie de retry :
-      1. Requête standard (location tag + person keyword aléatoire)
-      2. Fallback — person keyword différent
-      3. Fallback ultime — person keyword seul sans contexte location
+      MODE --relevant (keyword_pool fourni) :
+        1. Requête — keyword aléatoire du pool
+        2. Fallback — keyword différent du pool
+        3. Fallback ultime — keyword différent du pool
+
+      MODE standard (keyword_pool = None) :
+        1. Requête standard (location tag + person keyword aléatoire)
+        2. Fallback — person keyword différent
+        3. Fallback ultime — person keyword seul sans contexte location
     """
-    strategies = [
-        {
-            "label":          "requête standard (location + person keyword)",
-            "person_kw":      None,
-            "force_location": None,
-        },
-        {
-            "label":          "fallback — person keyword différent",
-            "person_kw":      random.choice(_PERSON_KEYWORDS),
-            "force_location": None,
-        },
-        {
-            "label":          "fallback ultime — person keyword seul sans contexte location",
-            "person_kw":      "pretty girl aesthetic",
-            "force_location": "",
-        },
-    ]
+    # Construire les stratégies en fonction du mode (--relevant ou standard)
+    if keyword_pool:
+        # Mode --relevant : utiliser UNIQUEMENT le keyword_pool
+        pool_sample = random.sample(keyword_pool, min(3, len(keyword_pool)))
+        strategies = [
+            {
+                "label":          f"requête --relevant (pool keyword 1)",
+                "person_kw":      pool_sample[0] if len(pool_sample) > 0 else None,
+                "force_location": None,
+            },
+            {
+                "label":          f"fallback --relevant (pool keyword 2)",
+                "person_kw":      pool_sample[1] if len(pool_sample) > 1 else pool_sample[0],
+                "force_location": None,
+            },
+            {
+                "label":          f"fallback ultime --relevant (pool keyword 3)",
+                "person_kw":      pool_sample[2] if len(pool_sample) > 2 else pool_sample[0],
+                "force_location": None,
+            },
+        ]
+    else:
+        # Mode standard : combiner location + _PERSON_KEYWORDS
+        strategies = [
+            {
+                "label":          "requête standard (location + person keyword)",
+                "person_kw":      None,
+                "force_location": None,
+            },
+            {
+                "label":          "fallback — person keyword différent",
+                "person_kw":      random.choice(_PERSON_KEYWORDS),
+                "force_location": None,
+            },
+            {
+                "label":          "fallback ultime — person keyword seul sans contexte location",
+                "person_kw":      "pretty girl aesthetic",
+                "force_location": "",
+            },
+        ]
 
     async with async_playwright() as pw:
         consecutive_failures = 0
