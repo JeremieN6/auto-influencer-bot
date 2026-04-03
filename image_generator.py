@@ -651,8 +651,9 @@ def inject_madison_body(scene_json: dict) -> dict:
         "instruction": "MUST match attached 3-view reference sheet exactly.",
     }
 
-    # Garantir que subject existe
-    if "subject" not in enriched:
+    # Garantir que subject existe ET qu'il est bien un dictionnaire
+    # (Gemini peut parfois retourner subject comme une liste, ce qui cause une erreur)
+    if "subject" not in enriched or not isinstance(enriched["subject"], dict):
         enriched["subject"] = {}
 
     # Injecter — on écrase body et face car ils doivent toujours décrire Madison,
