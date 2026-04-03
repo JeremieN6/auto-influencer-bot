@@ -1,0 +1,4 @@
+{
+  "profiles": ["madison"],
+  "default": "madison"
+}

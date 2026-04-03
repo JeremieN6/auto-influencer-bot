@@ -87,3 +87,22 @@ scripts/
 
 #Commands de développement
 commands/
+
+# ================================================================
+# TEMPLATIZATION — Multi-profils (ajouté le 2026-04-03)
+# ================================================================
+
+# Profils privés (garder example.json pour les utilisateurs)
+data/profiles/*.json
+!data/profiles/example.json
+
+# Références privées (garder example_*.jpg pour distribution)
+data/refs/*
+!data/refs/example_face.jpg
+!data/refs/example_body.jpg
+
+# Runtime data (données générées par profil)
+data/runtime/
+
+# Profil actif courant
+data/active_influencer.txt
