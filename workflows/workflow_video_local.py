@@ -436,9 +436,9 @@ def run(concept: dict | None = None, dry_run: bool = False) -> tuple[str, str, s
     logger.info(f"Personnage détecté : {has_person}")
 
     if has_person:
-        return _run_person_branch(video_path, frame_path, step)
+        return _run_person_branch(video_path, frame_path, step, dry_run=dry_run)
     else:
-        return _run_ambiance_branch(video_path, frame_path, step)
+        return _run_ambiance_branch(video_path, frame_path, step, dry_run=dry_run)
 
 
 # ================================================================
@@ -449,6 +449,7 @@ def _run_person_branch(
     video_path: str,
     frame_path: str,
     step: dict,
+    dry_run: bool = False,
 ) -> tuple[str, str, str, str, str]:
     """Pipeline complet quand un personnage est détecté sur la Frame 1."""
 
@@ -479,7 +480,7 @@ def _run_person_branch(
             "IMAGE_SAFETY persistant sur génération image Madison — "
             "fallback flux ambiance (vidéo source brute, type=story)"
         )
-        return _run_ambiance_branch(video_path, frame_path, step)
+        return _run_ambiance_branch(video_path, frame_path, step, dry_run=dry_run)
     logger.info(f"Image Madison générée : {madison_image_path}")
     madison_image_path = _crop_to_portrait_9_16(madison_image_path)  # safety net si Gemini ignore le ratio
 
@@ -495,7 +496,7 @@ def _run_person_branch(
             body_status = "⚠ Retry — ✓ OK" if body_ok else "⚠ Retry — non validé"
         except ImageSafetyError:
             logger.warning("IMAGE_SAFETY sur retry — fallback flux ambiance")
-            return _run_ambiance_branch(video_path, frame_path, step)
+            return _run_ambiance_branch(video_path, frame_path, step, dry_run=dry_run)
     logger.info(f"Corps Madison : {body_status}")
 
     # Sauvegarder l'état intermédiaire avant Kling (recovery si erreur)
@@ -519,6 +520,18 @@ def _run_person_branch(
     caption_prompt = _build_video_caption_prompt(scene_json, step, "reel")
     caption        = generate_caption(caption_prompt)
 
+    # Cleanup : supprimer la vidéo source pour vider progressivement /data/videos/
+    # (uniquement si la source est dans VIDEOS_DIR — ne pas toucher aux sources manuelles)
+    if not dry_run:
+        from config import VIDEOS_DIR
+        try:
+            source_parent = str(Path(video_path).parent)
+            if Path(source_parent).resolve() == Path(VIDEOS_DIR).resolve():
+                Path(video_path).unlink()
+                logger.info(f"[cleanup] Vidéo source supprimée : {Path(video_path).name}")
+        except Exception as e:
+            logger.warning(f"[cleanup] Impossible de supprimer {video_path} : {e}")
+
     logger.info(f"=== Workflow Vidéo Local terminé (reel) : {final_video_path} ===")
     return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path, body_status
 
@@ -531,6 +544,7 @@ def _run_ambiance_branch(
     video_path: str,
     frame_path: str,
     step: dict,
+    dry_run: bool = False,
 ) -> tuple[str, str, str, str, str]:
     """Pipeline quand aucun personnage n'est détecté — vidéo utilisée telle quelle."""
     log_step(__name__, 4, TOTAL_STEPS, "Flux ambiance : vidéo utilisée brute")
@@ -545,6 +559,18 @@ def _run_ambiance_branch(
 
     caption_prompt = _build_ambiance_caption_prompt(video_path, step)
     caption        = generate_caption(caption_prompt)
+
+    # Cleanup : supprimer la vidéo source (nginx a déjà sa copie)
+    # (uniquement si la source est dans VIDEOS_DIR — ne pas toucher aux sources manuelles)
+    if not dry_run:
+        from config import VIDEOS_DIR
+        try:
+            source_parent = str(Path(video_path).parent)
+            if Path(source_parent).resolve() == Path(VIDEOS_DIR).resolve():
+                Path(video_path).unlink()
+                logger.info(f"[cleanup] Vidéo source supprimée : {Path(video_path).name}")
+        except Exception as e:
+            logger.warning(f"[cleanup] Impossible de supprimer {video_path} : {e}")
 
     logger.info(f"=== Workflow Vidéo Local terminé (story/ambiance) : {video_path} ===")
     return video_path, public_url, filename, caption, "story", "", "", "N/A (flux ambiance)"
