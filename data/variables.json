@@ -75,6 +75,8 @@
       "tropical bikini aesthetic",
       "summer tan line aesthetic outfit",
       "beach girl aesthetic",
+      "bikini aesthetic baddie",
+      "beach bikini outfit",
       "pool girl aesthetic",
       "beach body aesthetic",
       "beach selfie girl"
@@ -83,6 +85,7 @@
       "mini dress outfit",
       "bodycon dress",
       "crop top outfit",
+      "lingerie baddie aesthetic",
       "tank top outfit",
       "tight jeans outfit",
       "summer dress aesthetic",
@@ -110,16 +113,16 @@
 
   "pinterest_video_tags_reel": {
     "bedroom mirror":              "video mirror selfie aesthetic",
-    "beach at sunset":             "video beach girl aesthetic",
-    "cafe terrace Paris":          "video cafe outfit girl",
-    "poolside luxury":             "video pool girl aesthetic",
-    "rooftop city view":           "video rooftop girl aesthetic",
-    "hotel room morning":          "video hotel room girl",
-    "forest path golden hour":     "video golden hour girl",
-    "kitchen counter":             "video kitchen girl aesthetic",
-    "balcony with city skyline":   "video balcony girl",
-    "linen sofa living room":      "video cozy girl aesthetic",
-    "outdoor terrace white stone": "video terrace girl aesthetic"
+    "beach at sunset":             "video beach baddie aesthetic",
+    "cafe terrace Paris":          "video cafe outfit baddie aesthetic",
+    "poolside luxury":             "video pool baddie aesthetic",
+    "rooftop city view":           "video rooftop baddie aesthetic",
+    "hotel room morning":          "video room baddie",
+    "forest path golden hour":     "video golden hour baddie",
+    "kitchen counter":             "video kitchen baddie aesthetic",
+    "balcony with city skyline":   "video balcony baddie",
+    "linen sofa living room":      "video cozy baddie aesthetic",
+    "outdoor terrace white stone": "video terrace baddie aesthetic"
   },
 
   "pinterest_video_tags_story": {

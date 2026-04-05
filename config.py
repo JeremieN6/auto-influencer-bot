@@ -21,32 +21,71 @@ for _env_file in _env_candidates:
         break
 
 # ================================================================
-# INFLUENCER CONFIG — seul bloc à modifier pour changer d'influenceuse
+# INFLUENCER CONFIG — chargé depuis influencer_manager (Phase 1)
 # ================================================================
 
-INFLUENCER_NAME  = "Madison"
-INFLUENCER_STYLE = (
-    "blonde californienne, casual-sexy aesthetic, "
-    "beige/neutral color palette, authentic photography"
-)
+# Tentative de chargement depuis le nouveau système (data/profiles/madison.json).
+# Si échec (migration en cours), fallback sur les valeurs hardcodées ci-dessous.
 
-# Dérivé automatiquement depuis le nom — ne pas modifier manuellement.
-# Pour une nouvelle influenceuse "Sofia" → déposer :
-#   data/ref_sofia_face.jpg  (référence visage 3 angles)
-#   data/ref_sofia_body.jpg  (référence corps 3 panels)
-INFLUENCER_REF_IMAGE_PATH = f"data/ref_{INFLUENCER_NAME.lower()}"   # legacy — utilisé par image_generator.py (workflow JSON)
-INFLUENCER_REF_FACE_PATH  = f"data/ref_{INFLUENCER_NAME.lower()}_face.jpg"
-INFLUENCER_REF_BODY_PATH  = f"data/ref_{INFLUENCER_NAME.lower()}_body.jpg"
+try:
+    from influencer_manager import (
+        get_active_influencer,
+        get_profile,
+        get_path,
+        get_display_name,
+        get_gender,
+    )
+    
+    _profile = get_profile()
+    INFLUENCER_NAME = _profile["display_name"]
+    INFLUENCER_STYLE = _profile["style"]
+    INFLUENCER_GENDER = _profile.get("gender", "female")
+    
+    # Chemins des images de référence
+    INFLUENCER_REF_FACE_PATH = get_path("ref_face.jpg")
+    INFLUENCER_REF_BODY_PATH = get_path("ref_body.jpg")
+    INFLUENCER_REF_IMAGE_PATH = INFLUENCER_REF_FACE_PATH.replace("_face.jpg", "")  # legacy
+    
+    # Mots-clés Pinterest (pour l'instant, utiliser les keywords lifestyle comme fallback)
+    # TODO Phase 2 : extraire depuis _profile["variables"]["relevant_keywords"]
+    try:
+        _keywords_all = []
+        for cat_keywords in _profile.get("variables", {}).get("relevant_keywords", {}).values():
+            _keywords_all.extend(cat_keywords)
+        PINTEREST_KEYWORDS = _keywords_all[:5] if _keywords_all else [
+            "lifestyle aesthetic", "aesthetic girl", "instagram aesthetic"
+        ]
+    except Exception:
+        PINTEREST_KEYWORDS = ["lifestyle aesthetic", "aesthetic girl", "instagram aesthetic"]
 
-# Mots-clés Pinterest alignés sur la niche de l'influenceuse.
-# Utilisés pour construire la requête de recherche Pinterest (workflow V1).
-PINTEREST_KEYWORDS = [
-    "lifestyle aesthetic",
-    "skincare routine",
-    "golden hour portrait",
-    "casual outfit",
-    "morning routine",
-]
+except (ImportError, FileNotFoundError, KeyError) as e:
+    # Fallback — Phase 1 : migration en cours, utiliser les valeurs hardcodées
+    import warnings
+    warnings.warn(
+        f"Impossible de charger le profil depuis influencer_manager : {e}. "
+        f"Utilisation des valeurs hardcodées (rétrocompatibilité Phase 1).",
+        stacklevel=2,
+    )
+    
+    INFLUENCER_NAME = "Madison"
+    INFLUENCER_STYLE = (
+        "blonde californienne, casual-sexy aesthetic, "
+        "beige/neutral color palette, authentic photography"
+    )
+    INFLUENCER_GENDER = "female"
+    
+    # Chemins legacy
+    INFLUENCER_REF_IMAGE_PATH = f"data/ref_{INFLUENCER_NAME.lower()}"
+    INFLUENCER_REF_FACE_PATH = f"data/ref_{INFLUENCER_NAME.lower()}_face.jpg"
+    INFLUENCER_REF_BODY_PATH = f"data/ref_{INFLUENCER_NAME.lower()}_body.jpg"
+    
+    PINTEREST_KEYWORDS = [
+        "lifestyle aesthetic",
+        "skincare routine",
+        "golden hour portrait",
+        "casual outfit",
+        "morning routine",
+    ]
 
 # ================================================================
 # API KEYS — chargées depuis .env (jamais en dur ici)

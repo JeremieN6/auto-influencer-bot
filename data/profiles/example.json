@@ -1,0 +1,127 @@
+{
+  "name": "example",
+  "display_name": "Example Influencer",
+  "gender": "female",
+  "style": "Describe the aesthetic, age, physical traits, style keywords",
+  "ref_face": "data/refs/example_face.jpg",
+  "ref_body": "data/refs/example_body.jpg",
+  
+  "character_template": {
+    "description": "Describe the character identity, age, general aesthetic",
+    "body": {
+      "physique": "Overall body description",
+      "anatomy": {
+        "shoulders": "...",
+        "waist": "...",
+        "hips": "...",
+        "breasts": "...",
+        "waist_to_hip_ratio": "..."
+      },
+      "skin": {
+        "tone": "...",
+        "texture": "...",
+        "details": "..."
+      }
+    },
+    "face": {
+      "face_shape": "...",
+      "cheekbones": "...",
+      "eyes": "...",
+      "nose": "...",
+      "lips": "...",
+      "brows": "...",
+      "hair": "...",
+      "skin": "...",
+      "expression": "...",
+      "instruction": "MUST match attached 3-view reference sheet exactly."
+    },
+    "wardrobe": {
+      "top": "{top_description}",
+      "bottom": "{bottom_description}",
+      "accessories": "{accessories}"
+    },
+    "pose": "{pose_description}"
+  },
+
+  "variables": {
+    "locations": [
+      "bedroom mirror",
+      "beach at sunset",
+      "cafe terrace",
+      "..."
+    ],
+    "outfits": [
+      "white crop top + high waist jeans",
+      "black bikini",
+      "..."
+    ],
+    "poses": [
+      "mirror selfie arm raised",
+      "over shoulder looking back",
+      "..."
+    ],
+    "moods": [
+      "playful smile",
+      "sultry soft look",
+      "..."
+    ],
+    "lighting": [
+      "golden hour warm backlight",
+      "soft diffused indoor",
+      "..."
+    ],
+    
+    "relevant_keywords": {
+      "lifestyle": ["keyword1", "keyword2", "..."],
+      "beach": ["keyword1", "keyword2", "..."],
+      "outfit": ["keyword1", "keyword2", "..."]
+    },
+
+    "pinterest_tags": {
+      "bedroom mirror": "mirror selfie girl",
+      "beach at sunset": "beach girl aesthetic",
+      "...": "..."
+    },
+
+    "pinterest_video_tags_reel": {
+      "bedroom mirror": "video mirror selfie aesthetic",
+      "...": "..."
+    },
+
+    "pinterest_video_tags_story": {
+      "bedroom mirror": "video cozy room aesthetic",
+      "...": "..."
+    }
+  },
+
+  "calendar": {
+    "cycle": [
+      {
+        "step": 1,
+        "format": "4:5",
+        "type": "feed",
+        "hashtags": true,
+        "note": "Post principal feed"
+      },
+      {
+        "step": 2,
+        "format": "9:16",
+        "type": "story",
+        "hashtags": false,
+        "note": "Story immersive"
+      }
+    ],
+    "note": "Customize your editorial cycle here"
+  },
+
+  "instagram_account_id": "",
+  "instagram_access_token": "",
+
+  "hashtag_blocks": {
+    "lifestyle": "#example #lifestyle #...",
+    "beach": "#beach #summer #...",
+    "fitness": "#fitness #workout #...",
+    "skincare": "#skincare #glowup #...",
+    "fashion": "#fashion #outfit #..."
+  }
+}

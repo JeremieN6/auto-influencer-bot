@@ -51,10 +51,19 @@ def _select_workflow(step: dict) -> str:
 
     Priorité :
     1. Vidéos locales disponibles → "video_local" (toujours)
+       → Si /data/videos/ vide, tente un auto-refill depuis /temp/videos/ avant décision
     2. Step feed   → "pinterest" (image)
     3. Step story  → "video_pinterest" (pool story)
     4. Step reel   → "video_pinterest" (pool reel)
     """
+    # Tentative de refill automatique si /data/videos/ vide
+    if not _has_local_videos():
+        from video_batch_manager import auto_refill_if_empty
+        refilled = auto_refill_if_empty()
+        if refilled:
+            log("info", "main", "Auto-refill : nouvelle vague de vidéos transférée dans /data/videos/")
+    
+    # Décision du workflow
     if _has_local_videos():
         return "video_local"
     step_type = step.get("type", "feed")
