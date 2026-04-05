@@ -1,7 +1,7 @@
 """
 main.py — Orchestrateur principal du pipeline.
 
-Appelé automatiquement par le cron toutes les 4 jours.
+Appelé automatiquement par le cron tous les jours à midi (heure française).
 Peut également être lancé manuellement pour tester.
 
 FLUX COMPLET (workflow Pinterest V1) :

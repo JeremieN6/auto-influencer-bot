@@ -111,7 +111,7 @@ TIKTOK_OPEN_ID      = os.getenv("TIKTOK_OPEN_ID")
 # SYSTEM CONFIG
 # ================================================================
 
-POSTING_INTERVAL_DAYS = 4
+POSTING_INTERVAL_DAYS = 1
 HISTORY_WINDOW_DAYS   = 30
 LOG_PATH              = "logs/run.log"
 

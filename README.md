@@ -252,9 +252,9 @@ Ouvrir le crontab :
 crontab -e
 ```
 
-Ajouter la ligne (pipeline toutes les 4 jours à 9h00) :
+Ajouter la ligne (pipeline tous les jours à midi, heure française) :
 ```bash
-0 9 */4 * * /home/user/influencer-bot/.venv/bin/python /home/user/influencer-bot/main.py >> /home/user/influencer-bot/logs/cron.log 2>&1
+0 12 * * * cd /opt/mybots/auto-influencer-bot && ./venv/bin/python main.py >> logs/cron.log 2>&1
 ```
 
 Vérifier que le cron est actif :
