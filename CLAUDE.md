@@ -71,6 +71,7 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
 | 2026-03-04 | Nettoyage image Pinterest source après extraction JSON | Évite l'accumulation de fichiers temporaires dans outputs/ |
 | 2026-03-04 | `/generate` déclenche main.py via subprocess | Séparation propre entre le processus bot (polling) et le pipeline (cron) |
 | 2026-03-04 | `--dry-run` flag dans main.py | Facilite les tests sans affecter l'historique ni envoyer sur Telegram |
+| 2026-04-08 | Système de queue pour posts multiples au lieu de `pending_state` unique | Permet de recevoir un nouveau post chaque jour sans bloquer si le précédent n'est pas validé — validation indépendante de chaque post via boutons inline |
 
 ---
 
@@ -85,3 +86,15 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
 - Décision archi clé : pending_state partagé via JSON (2 processus distincts)
 - INFLUENCER_REF_IMAGE_PATH dérivé automatiquement depuis INFLUENCER_NAME (généricité)
 - Point d'attention : noms modèles Gemini (previews) à vérifier sur https://ai.google.dev/models
+
+### Session 2026-04-08 — Système de queue pour posts multiples
+- Implémenté file d'attente `data/pending_queue/` au lieu de `pending_state` unique
+- Chaque post reçoit un ID unique (timestamp) et ses propres boutons de validation
+- Envoi quotidien possible même si posts précédents non validés
+- Modifications majeures dans `telegram_bot.py` :
+  - Nouvelles fonctions : `_save_to_queue()`, `_load_from_queue()`, `_delete_from_queue()`, `_list_queue()`
+  - `send_for_validation()` et `send_video_for_validation()` créent des fichiers dans la queue avec boutons inline (queue_id)
+  - Nouveaux callback handlers : `handle_validate_image()`, `handle_publish_video()`, `handle_delete_from_queue()`
+  - `/status` affiche tous les posts en attente (3 premiers + compteur)
+  - Retrait de tous les blocages `_has_pending_content()` dans `/generate`, `/run`, `/manualGeneration`
+- Message garde-fou "0.0 jour(s)" : comportement **normal** — cron déclenché après un run récent, correctement bloqué par `MIN_DAYS_BETWEEN_RUNS`

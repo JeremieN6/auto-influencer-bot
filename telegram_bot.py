@@ -63,6 +63,67 @@ def _escape_md(text: str) -> str:
 
 
 # ================================================================
+# Système de queue pour posts multiples
+# ================================================================
+
+def _get_queue_dir() -> str:
+    """Retourne le chemin du répertoire de queue."""
+    import os
+    queue_dir = os.path.join(os.path.dirname(PENDING_STATE_PATH), "pending_queue")
+    os.makedirs(queue_dir, exist_ok=True)
+    return queue_dir
+
+
+def _save_to_queue(state: dict) -> str:
+    """Enregistre un post dans la queue et retourne son queue_id."""
+    from datetime import datetime
+    queue_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    state["queue_id"] = queue_id
+    if not state.get("created_at"):
+        state["created_at"] = datetime.now().isoformat()
+    
+    queue_file = os.path.join(_get_queue_dir(), f"pending_{queue_id}.json")
+    with open(queue_file, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+    logger.info(f"Post ajouté à la queue : {queue_id}")
+    return queue_id
+
+
+def _load_from_queue(queue_id: str) -> dict | None:
+    """Charge un post depuis la queue."""
+    queue_file = os.path.join(_get_queue_dir(), f"pending_{queue_id}.json")
+    try:
+        with open(queue_file, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+
+
+def _delete_from_queue(queue_id: str) -> None:
+    """Supprime un post de la queue."""
+    queue_file = os.path.join(_get_queue_dir(), f"pending_{queue_id}.json")
+    try:
+        os.remove(queue_file)
+        logger.info(f"Post supprimé de la queue : {queue_id}")
+    except FileNotFoundError:
+        pass
+
+
+def _list_queue() -> list[dict]:
+    """Liste tous les posts en attente, triés par date (plus ancien en premier)."""
+    queue_dir = _get_queue_dir()
+    files = sorted([f for f in os.listdir(queue_dir) if f.startswith("pending_") and f.endswith(".json")])
+    posts = []
+    for filename in files:
+        try:
+            with open(os.path.join(queue_dir, filename), encoding="utf-8") as f:
+                posts.append(json.load(f))
+        except Exception as e:
+            logger.warning(f"Impossible de lire {filename} : {e}")
+    return posts
+
+
+# ================================================================
 # État partagé (inter-process via JSON)
 # ================================================================
 
@@ -167,12 +228,16 @@ async def send_for_validation(
 ) -> None:
     """
     Envoie l'image générée + caption sur Telegram pour validation humaine.
-    Sauvegarde l'état dans pending_state.json.
+    Sauvegarde dans la queue (permet plusieurs posts en attente).
 
     Appelée depuis main.py via asyncio.run(send_for_validation(...)).
     Le pending_state doit être mis à jour par main.py AVANT d'appeler cette fonction.
     """
     logger.info(f"Envoi Telegram pour validation : {image_path}")
+
+    # Charger le pending_state actuel et l'enregistrer dans la queue
+    state = load_pending_state()
+    queue_id = _save_to_queue(state)
 
     _TYPE_LABELS = {"feed": "🖼️ Feed", "story": "📱 Story", "reel": "🎬 Reel"}
     _DEST_LABELS = {"instagram": "Instagram", "tiktok": "TikTok", "both": "Instagram \\+ TikTok"}
@@ -190,10 +255,16 @@ async def send_for_validation(
         f"🗂 Type : {type_label} \\| 📤 Destination : {dest_label}\n\n"
         f"*Caption :*\n{_escape_md(caption)}\n\n"
         f"──────────────────\n"
-        f"✅ /validate — Publier sur Instagram\n"
-        f"✏️  /modify \\[instruction\\] — Régénérer avec modification\n"
-        f"🗑️ /supprimer — Supprimer \\(ne pas publier\\)"
+        f"⏱ Post ID : `{_escape_md(queue_id)}`"
     )
+
+    # Boutons inline avec queue_id
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Publier Instagram", callback_data=f"val_img_{queue_id}"),
+            InlineKeyboardButton("🗑️ Supprimer", callback_data=f"del_{queue_id}"),
+        ],
+    ])
 
     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
         with open(image_path, "rb") as photo:
@@ -202,15 +273,18 @@ async def send_for_validation(
                 photo=photo,
                 caption=text,
                 parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=keyboard,
             )
 
-    logger.info("Message Telegram envoyé avec succès")
+    # Nettoyer le pending_state après avoir mis en queue
+    clear_pending_state()
+    logger.info(f"Message Telegram envoyé avec succès (queue_id={queue_id})")
 
 
 async def send_video_for_validation(video_path: str, caption: str, video_type: str) -> None:
     """
     Envoie la vidéo générée + caption sur Telegram avec les boutons de publication.
-    Sauvegarde l'état dans pending_state.json.
+    Sauvegarde dans la queue (permet plusieurs vidéos en attente).
 
     Args:
         video_path : chemin local de la vidéo
@@ -219,17 +293,21 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
     """
     logger.info(f"Envoi Telegram vidéo pour validation : {video_path} | type={video_type}")
 
+    # Charger le pending_state actuel et l'enregistrer dans la queue
+    state = load_pending_state()
+    queue_id = _save_to_queue(state)
+
     if video_type == "reel":
         type_label = "Reel"
         dest_label = "Instagram Reels / TikTok"
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("📸 Instagram Reels",  callback_data="pub_video_reel"),
-                InlineKeyboardButton("🎵 TikTok",             callback_data="pub_video_tiktok"),
+                InlineKeyboardButton("📸 Instagram Reels",  callback_data=f"pub_reel_{queue_id}"),
+                InlineKeyboardButton("🎵 TikTok",             callback_data=f"pub_tiktok_{queue_id}"),
             ],
             [
-                InlineKeyboardButton("📸🎵 Les deux",          callback_data="pub_video_both"),
-                InlineKeyboardButton("❌ Ignorer",            callback_data="pub_video_ignore"),
+                InlineKeyboardButton("📸🎵 Les deux",          callback_data=f"pub_both_{queue_id}"),
+                InlineKeyboardButton("🗑️ Supprimer",         callback_data=f"del_{queue_id}"),
             ],
         ])
     else:  # story
@@ -237,15 +315,17 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
         dest_label = "Instagram"
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Publier Story Instagram", callback_data="pub_video_story"),
-                InlineKeyboardButton("❌ Ignorer",               callback_data="pub_video_ignore"),
+                InlineKeyboardButton("✅ Publier Story Instagram", callback_data=f"pub_story_{queue_id}"),
+                InlineKeyboardButton("🗑️ Supprimer",               callback_data=f"del_{queue_id}"),
             ],
         ])
 
     text = (
         f"🎬 *Nouveau {type_label} {_escape_md(INFLUENCER_NAME)}* \u2014 en attente de validation\n\n"
         f"🗂 Type : 🎬 {type_label} \\| 📤 Destination : {_escape_md(dest_label)}\n\n"
-        f"*Caption :*\n{_escape_md(caption)}"
+        f"*Caption :*\n{_escape_md(caption)}\n\n"
+        f"──────────────────\n"
+        f"⏱ Post ID : `{_escape_md(queue_id)}`"
     )
 
     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
@@ -258,7 +338,9 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
 
-    logger.info("Message vidéo Telegram envoyé avec succès")
+    # Nettoyer le pending_state après avoir mis en queue
+    clear_pending_state()
+    logger.info(f"Message vidéo Telegram envoyé avec succès (queue_id={queue_id})")
 
 
 # ================================================================
@@ -307,7 +389,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     from config import MIN_DAYS_BETWEEN_RUNS, POSTING_INTERVAL_DAYS
     from datetime import datetime, timedelta
 
-    state   = load_pending_state()
+    queue = _list_queue()
     history = load_history()
 
     # Prochain post auto
@@ -330,64 +412,29 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         next_str = "Aucun post enregistré — premier run à venir"
 
-    has_pending = bool(state.get("image_path"))
-    age_str = _format_age(state.get("created_at"))
-
-    if state.get("_intermediate"):
-        madison_name = _escape_md(os.path.basename(state.get("madison_image_path") or "?"))
-        pending_str = (
-            f"\u26a0\ufe0f *Pipeline interrompu* \u2014 Kling a échoué\\.\n"
-            f"   Image Madison générée : `{madison_name}`\n"
-            f"   \u2192 /retryKling pour relancer automatiquement\n"
-            f"   \u2192 /manualGeneration pour une nouvelle source"
-        )
-    elif state.get("video_path"):
-        vid_type = _escape_md(state.get("video_type") or "vidéo")
-        caption_preview = _escape_md(str(state.get('caption', ''))[:80])
-        pending_str = (
-            f"\u2705 Vidéo \\({vid_type}\\) en attente de validation{age_str}\n"
-            f"   Caption : {caption_preview}\\.\\.\\."
-        )
-    elif has_pending:
-        caption_preview = _escape_md(str(state.get('caption', ''))[:80])
-        pending_str = (
-            f"\u2705 Image en attente de validation{age_str}\n"
-            f"   Caption : {caption_preview}\\.\\.\\."
-        )
+    # Posts en attente (queue)
+    if queue:
+        pending_str = f"✅ *{len(queue)} post(s) en attente de validation*\n\n"
+        for i, post in enumerate(queue[:3], 1):  # Afficher max 3 premiers
+            media_type = post.get("media_type", "image")
+            icon = "🎬" if media_type == "video" else "📸"
+            queue_id = post.get("queue_id", "?")
+            age_str = _format_age(post.get("created_at"))
+            caption_preview = _escape_md(str(post.get('caption', ''))[:60])
+            pending_str += f"{i}\. {icon} `{_escape_md(queue_id)}`{age_str}\n   _{caption_preview}_\.\.\.\n\n"
+        if len(queue) > 3:
+            pending_str += f"   \\.\.\. \+{len(queue) - 3} autre\(s\)\n"
     else:
-        pending_str = "\u26aa Aucun contenu en attente"
+        pending_str = "⚪ Aucun contenu en attente"
 
     text = (
         f"📊 *Status {_escape_md(INFLUENCER_NAME)}*\n\n"
-        f"{pending_str}\n\n"
+        f"{pending_str}\n"
         f"📅 Prochain post auto : {_escape_md(next_str)}\n"
         f"⏱ Cadence auto : {_escape_md(str(POSTING_INTERVAL_DAYS))}j \| garde\-fou : {_escape_md(str(MIN_DAYS_BETWEEN_RUNS))}j\n"
         f"📈 Total posts historique : {len(history)}"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
-
-    # Envoyer l'aperçu visuel du contenu en attente
-    img_path = state.get("image_path")
-    vid_path = state.get("video_path")
-    madison_img_path = state.get("madison_image_path") if state.get("_intermediate") else None
-    if madison_img_path and os.path.exists(madison_img_path):
-        try:
-            with open(madison_img_path, "rb") as _photo:
-                await update.message.reply_photo(photo=_photo, caption="🖼️ Best frame généré \(Kling en attente\)")
-        except Exception as _e:
-            logger.warning(f"Impossible d'envoyer le best frame Madison : {_e}")
-    elif img_path and os.path.exists(img_path):
-        try:
-            with open(img_path, "rb") as _photo:
-                await update.message.reply_photo(photo=_photo, caption="📸 Aperçu du contenu en attente")
-        except Exception as _e:
-            logger.warning(f"Impossible d'envoyer le thumbnail image : {_e}")
-    elif vid_path and os.path.exists(vid_path):
-        try:
-            with open(vid_path, "rb") as _vid:
-                await update.message.reply_video(video=_vid, caption="🎬 Aperçu du contenu en attente")
-        except Exception as _e:
-            logger.warning(f"Impossible d'envoyer le thumbnail vidéo : {_e}")
 
 
 async def cmd_validate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -501,14 +548,7 @@ async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update):
         return
 
-    state = load_pending_state()
-    if _has_pending_content(state):
-        await update.message.reply_text(
-            "⚠️ Un contenu est déjà en attente de validation\\.\ \n\n"
-            "Valide\\-le avec /validate ou supprime\\-le avec /supprimer avant de générer\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        return
+    # Plus de blocage sur pending_state — la queue permet plusieurs posts en attente
 
     try:
         # Déclencher le pipeline en subprocess (séparation de process)
@@ -651,14 +691,7 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not _is_authorized(update):
         return ConversationHandler.END
 
-    state = load_pending_state()
-    if _has_pending_content(state):
-        await update.message.reply_text(
-            "⚠️ Un contenu est déjà en attente de validation\\.\ \n\n"
-            "Valide\\-le avec /validate ou supprime\\-le avec /supprimer avant de générer\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        return ConversationHandler.END
+    # Plus de blocage sur pending_state — la queue permet plusieurs posts en attente
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("── 🤖 Automatique ──",       callback_data="noop")],
@@ -1376,14 +1409,7 @@ async def cmd_manual_generation(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     if not _is_authorized(update):
         return ConversationHandler.END
 
-    state = load_pending_state()
-    if _has_pending_content(state):
-        await update.message.reply_text(
-            "⚠️ Un contenu est déjà en attente de validation\\.\ \n\n"
-            "Valide\\-le avec /validate ou supprime\\-le avec /supprimer avant de générer\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        return ConversationHandler.END
+    # Plus de blocage sur pending_state — la queue permet plusieurs posts en attente
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("\U0001f5bc\ufe0f Image",  callback_data="manual_image"),
@@ -1637,45 +1663,87 @@ def _build_manual_gen_handler() -> ConversationHandler:
 # ================================================================
 
 # ================================================================
-# Callbacks publication vidéo
+# Callbacks publication et suppression (avec queue_id)
 # ================================================================
 
-async def handle_pub_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Gère les boutons de publication vidéo envoyés par send_video_for_validation().
-    Callback data : pub_video_reel | pub_video_tiktok | pub_video_both |
-                    pub_video_story | pub_video_ignore
-    """
+async def handle_validate_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Gère la publication d'une image depuis la queue."""
     query = update.callback_query
     await query.answer()
 
     if not _is_authorized(update):
         return
 
-    action = query.data
-    state  = load_pending_state()
+    # Extraire le queue_id depuis callback_data format: val_img_20260408_120534
+    queue_id = query.data.split("_", 2)[2]
+    post = _load_from_queue(queue_id)
 
-    if action == "pub_video_ignore":
-        clear_pending_state()
+    if not post:
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await query.message.reply_text("❌ Vidéo ignorée.")
-        logger.info("Vidéo ignorée par l'utilisateur")
+        await query.message.reply_text(f"❌ Post `{queue_id}` introuvable dans la queue.")
         return
 
-    video_public_url = state.get("video_public_url")
-    video_filename   = state.get("video_filename", "")
-    video_path       = state.get("video_path", "")
-    caption          = state.get("caption", "")
+    public_url = post.get("public_url")
+    caption = post.get("caption", "")
+    filename = post.get("image_filename", "")
 
-    if not video_public_url:
+    if not public_url:
+        await query.message.reply_text("❌ URL publique manquante.")
+        return
+
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await query.message.reply_text("⏳ Publication en cours...")
+
+    try:
+        from instagram_publisher import publish_post
+        result = publish_post(public_url, caption, filename)
+        media_id = result.get("id", "?")
+        _delete_from_queue(queue_id)
+        await query.message.reply_text(
+            f"✅ *Publié sur Instagram\\!*\nMedia ID : `{_escape_md(media_id)}`",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        logger.info(f"Image publiée — queue_id={queue_id}, media_id={media_id}")
+    except Exception as e:
+        logger.error(f"Erreur publication image : {e}")
+        await query.message.reply_text(f"❌ Erreur publication :\n{str(e)[:500]}")
+
+
+async def handle_publish_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Gère la publication d'une vidéo depuis la queue."""
+    query = update.callback_query
+    await query.answer()
+
+    if not _is_authorized(update):
+        return
+
+    # Format callback: pub_reel_20260408_120534 | pub_tiktok_... | pub_both_... | pub_story_...
+    parts = query.data.split("_")
+    action = parts[1]  # reel, tiktok, both, story
+    queue_id = "_".join(parts[2:])
+    
+    post = _load_from_queue(queue_id)
+    if not post:
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await query.message.reply_text("❌ Aucune vidéo en attente dans le pending_state.")
+        await query.message.reply_text(f"❌ Post `{queue_id}` introuvable.")
+        return
+
+    video_public_url = post.get("video_public_url")
+    video_filename = post.get("video_filename", "")
+    video_path = post.get("video_path", "")
+    caption = post.get("caption", "")
+
+    if not video_public_url:
+        await query.message.reply_text("❌ URL vidéo manquante.")
         return
 
     try:
@@ -1687,7 +1755,7 @@ async def handle_pub_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
     errors = []
 
     try:
-        if action in ("pub_video_reel", "pub_video_both"):
+        if action in ("reel", "both"):
             from instagram_publisher import publish_reel
             result = publish_reel(video_public_url, caption, video_filename)
             media_id = result.get("id", "?")
@@ -1695,26 +1763,26 @@ async def handle_pub_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
                 f"✅ *Reel publié sur Instagram\\!*\nMedia ID : `{_escape_md(media_id)}`",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
-            logger.info(f"Reel Instagram publié — media_id={media_id}")
+            logger.info(f"Reel publié — queue_id={queue_id}, media_id={media_id}")
     except Exception as e:
-        logger.error(f"Erreur publication Reel Instagram : {e}")
+        logger.error(f"Erreur publication Reel : {e}")
         errors.append(f"Instagram Reel : {e}")
 
     try:
-        if action in ("pub_video_tiktok", "pub_video_both"):
+        if action in ("tiktok", "both"):
             from tiktok_publisher import publish_video
             publish_id = publish_video(video_path, caption)
             await query.message.reply_text(
                 f"✅ *Vidéo publiée sur TikTok\\!*\nPublish ID : `{_escape_md(publish_id)}`",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
-            logger.info(f"Vidéo TikTok publiée — publish_id={publish_id}")
+            logger.info(f"TikTok publié — queue_id={queue_id}, publish_id={publish_id}")
     except Exception as e:
         logger.error(f"Erreur publication TikTok : {e}")
         errors.append(f"TikTok : {e}")
 
     try:
-        if action == "pub_video_story":
+        if action == "story":
             from instagram_publisher import publish_story_video
             result = publish_story_video(video_public_url, video_filename)
             media_id = result.get("id", "?")
@@ -1722,17 +1790,49 @@ async def handle_pub_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
                 f"✅ *Story publiée sur Instagram\\!*\nMedia ID : `{_escape_md(media_id)}`",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
-            logger.info(f"Story Instagram publiée — media_id={media_id}")
+            logger.info(f"Story publiée — queue_id={queue_id}, media_id={media_id}")
     except Exception as e:
-        logger.error(f"Erreur publication Story Instagram : {e}")
+        logger.error(f"Erreur publication Story : {e}")
         errors.append(f"Instagram Story : {e}")
 
     if errors:
-        await query.message.reply_text(
-            "❌ Erreurs lors de la publication :\n" + "\n".join(errors)
-        )
+        await query.message.reply_text("❌ Erreurs :\n" + "\n".join(errors))
     else:
-        clear_pending_state()
+        _delete_from_queue(queue_id)
+
+
+async def handle_delete_from_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Supprime un post de la queue sans publier."""
+    query = update.callback_query
+    await query.answer()
+
+    if not _is_authorized(update):
+        return
+
+    # Format: del_20260408_120534
+    queue_id = query.data.split("_", 1)[1]
+    
+    post = _load_from_queue(queue_id)
+    if not post:
+        await query.message.reply_text(f"❌ Post `{queue_id}` déjà supprimé ou introuvable.")
+        return
+
+    # Nettoyage fichiers intermédiaires
+    madison_img = post.get("madison_image_path")
+    if madison_img and os.path.exists(madison_img):
+        try:
+            os.remove(madison_img)
+            logger.info(f"Fichier intermédiaire supprimé : {madison_img}")
+        except Exception as e:
+            logger.warning(f"Impossible de supprimer {madison_img} : {e}")
+
+    _delete_from_queue(queue_id)
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await query.message.reply_text(f"🗑 Post `{queue_id}` supprimé — aucune publication effectuée.")
+    logger.info(f"Post supprimé via bouton — queue_id={queue_id}")
 
 
 # ================================================================
@@ -1759,18 +1859,12 @@ def start_bot() -> None:
     app.add_handler(CommandHandler("retryKling", cmd_retry_kling))
     app.add_handler(CommandHandler("supprimer",    cmd_discard))
     app.add_handler(_build_run_handler())
+    app.add_handler(_build_manual_gen_handler())
 
-    # Callbacks publication vidéo (indépendants de la conversation /run)
-    _VIDEO_PUB_ACTIONS = (
-        "pub_video_reel", "pub_video_tiktok", "pub_video_both",
-        "pub_video_story", "pub_video_ignore",
-    )
-    app.add_handler(
-        CallbackQueryHandler(
-            handle_pub_video,
-            pattern="^(" + "|".join(_VIDEO_PUB_ACTIONS) + ")$",
-        )
-    )
+    # Callbacks validation/suppression avec queue_id
+    app.add_handler(CallbackQueryHandler(handle_validate_image, pattern="^val_img_"))
+    app.add_handler(CallbackQueryHandler(handle_publish_video, pattern="^pub_(reel|tiktok|both|story)_"))
+    app.add_handler(CallbackQueryHandler(handle_delete_from_queue, pattern="^del_"))
 
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Log et notifie l'utilisateur en cas d'erreur dans un handler."""
