@@ -33,7 +33,7 @@ from pathlib import Path
 
 from PIL import Image as _PILImage
 
-from caption_generator import generate_caption
+from caption_generator import generate_caption, generate_caption_from_scene
 from concept_generator import build_caption_prompt, get_current_calendar_step
 from frame_extractor import check_min_shot_duration, extract_best_frame
 from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body, validate_body_proportions
@@ -475,7 +475,7 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         )
 
         filename, public_url = _expose_video_via_nginx(final_video_path)
-        caption = generate_caption(_build_video_caption_prompt(scene_json, step, "reel"))
+        caption = generate_caption_from_scene(scene_json, content_type="reel")
 
         logger.info(f"=== Workflow Vidéo Pinterest terminé (reel) : {final_video_path} ===")
         return final_video_path, public_url, filename, caption, "reel", madison_image_path, video_path, body_status, queries_tried
@@ -490,20 +490,16 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         log_step(__name__, 4, TOTAL_STEPS, "Flux ambiance : vidéo brute")
         log_step(__name__, 5, TOTAL_STEPS, "Génération caption ambiance")
 
+        scene_json = image_to_json(frame_path)
+        logger.info(f"JSON de scène ambiance extrait — clés : {list(scene_json.keys())}")
+
         # Nettoyer la frame temporaire
         if os.path.exists(frame_path):
             os.remove(frame_path)
             logger.debug(f"Frame temporaire supprimée : {frame_path}")
 
         filename, public_url = _expose_video_via_nginx(video_path)
-
-        concept_hint = {"location": "aesthetic scene", "mood": "chill ambiance",
-                        "outfit": "", "lighting": "natural light"}
-        caption_prompt = (
-            build_caption_prompt(concept_hint, step)
-            + "\n\n[Instagram Story — ambiance vidéo, pas de personnage]"
-        )
-        caption = generate_caption(caption_prompt)
+        caption = generate_caption_from_scene(scene_json, content_type="story")
 
         logger.info(f"=== Workflow Vidéo Pinterest terminé (story) : {video_path} ===")
         return video_path, public_url, filename, caption, "story", "", video_path, "N/A (flux ambiance)", queries_tried

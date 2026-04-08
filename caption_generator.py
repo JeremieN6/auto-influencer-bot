@@ -51,6 +51,101 @@ def generate_caption(caption_prompt: str, max_tokens: int = 500) -> str:
     return caption
 
 
+def generate_caption_from_scene(
+    scene_json: dict,
+    content_type: str = "feed",
+    max_tokens: int = 300,
+) -> str:
+    """
+    Génère une caption Instagram contextualisée depuis un JSON de scène.
+    
+    Cette fonction produit des captions courtes, engageantes et aguicheuses
+    qui reflètent le contenu réel de l'image/vidéo (location, tenue, mood...).
+    
+    Args:
+        scene_json   : JSON de scène généré par image_to_json() ou build_madison_json()
+        content_type : type de contenu ("feed", "story", "reel")
+        max_tokens   : limite de tokens de la réponse
+        
+    Returns:
+        Caption générée, nettoyée (strip)
+    """
+    from config import INFLUENCER_NAME
+    from prompts import PROMPT_CAPTION_CONTEXTUALIZED
+    
+    logger.info(f"Génération caption contextualisée — type : {content_type}")
+    
+    # Extraire les informations clés du JSON de scène
+    scene_desc = _build_scene_description(scene_json)
+    
+    prompt = PROMPT_CAPTION_CONTEXTUALIZED.format(
+        influencer_name=INFLUENCER_NAME,
+        content_type=content_type,
+        scene_description=scene_desc,
+    )
+    
+    logger.debug(f"Prompt caption contextualisée :\n{prompt[:300]}...")
+    
+    message = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    
+    caption = message.content[0].text.strip()
+    logger.info(f"Caption contextualisée générée ({len(caption)} chars) : {caption[:100]}...")
+    return caption
+
+
+def _build_scene_description(scene_json: dict) -> str:
+    """
+    Extrait les informations pertinentes du JSON de scène pour le prompt caption.
+    
+    Args:
+        scene_json : JSON de scène complet
+        
+    Returns:
+        Description textuelle de la scène (location, tenue, mood, lighting...)
+    """
+    parts = []
+    
+    # Context global
+    global_ctx = scene_json.get("global_context", {})
+    if scene_desc := global_ctx.get("scene_description"):
+        parts.append(f"Scene: {scene_desc}")
+    if time_of_day := global_ctx.get("time_of_day"):
+        parts.append(f"Time: {time_of_day}")
+    if weather := global_ctx.get("weather_atmosphere"):
+        parts.append(f"Atmosphere: {weather}")
+    
+    # Lighting
+    lighting = scene_json.get("global_context", {}).get("lighting", {})
+    if light_quality := lighting.get("quality"):
+        parts.append(f"Lighting: {light_quality}")
+    
+    # Pose & expression
+    subject = scene_json.get("subject", {})
+    pose = subject.get("pose", {})
+    if body_pos := pose.get("body_position"):
+        parts.append(f"Pose: {body_pos}")
+    if expression := pose.get("expression_mood"):
+        parts.append(f"Mood: {expression}")
+    
+    # Tenue
+    clothing = subject.get("clothing", {})
+    if outfit := clothing.get("outfit_description"):
+        parts.append(f"Outfit: {outfit}")
+    elif style := clothing.get("style"):
+        parts.append(f"Style: {style}")
+    
+    # Location (environment)
+    environment = scene_json.get("environment", {})
+    if location := environment.get("location_type"):
+        parts.append(f"Location: {location}")
+    
+    return " | ".join(parts) if parts else "Casual lifestyle content"
+
+
 # ================================================================
 # Validation saisie libre /run (V2)
 # ================================================================

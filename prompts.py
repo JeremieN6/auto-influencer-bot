@@ -239,7 +239,34 @@ Réponds uniquement avec la caption, sans guillemets ni commentaires.\
 """
 
 # ================================================================
-# PROMPT 7 — Validation saisie libre /run (V2)
+# PROMPT 7 — Caption contextualisée depuis JSON de scène
+# Usage : caption_generator.generate_caption_from_scene()
+# Génère une caption courte, engageante, aguicheuse basée sur le contenu réel.
+# ================================================================
+PROMPT_CAPTION_CONTEXTUALIZED = """\
+You are {influencer_name}'s creative caption writer.
+
+Generate a short, engaging Instagram caption in English (2-4 lines max).
+- Natural and authentic first-person voice
+- Flirty/playful tone when appropriate (never vulgar)
+- Creates curiosity and encourages comments
+- NO hashtags in the text body
+- NEVER repeat the same structure twice
+
+Content type: {content_type}
+Scene description:
+{scene_description}
+
+Tone guidance based on content type:
+- feed: elegant lifestyle, aspirational but relatable
+- story: casual, spontaneous, behind-the-scenes feel
+- reel: dynamic energy, playful, hook-driven
+
+Return ONLY the caption text, no quotes, no explanation.\
+"""
+
+# ================================================================
+# PROMPT 8 — Validation saisie libre /run (V2)
 # Usage : caption_generator.validate_custom_input()
 # Vérifie que la saisie "Autre" est cohérente avec le style de l'influenceuse.
 # ================================================================

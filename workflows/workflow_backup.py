@@ -47,7 +47,7 @@ from prompts import PROMPT_JSON_TO_IMAGE
 logger = get_logger(__name__)
 
 
-def run(source_path: str, enrich_with_concept: bool = False) -> tuple[str, str, str]:
+def run(source_path: str, enrich_with_concept: bool = False) -> tuple[str, str, str, dict]:
     """
     Exécute le workflow backup depuis une image source manuelle.
 
@@ -59,7 +59,8 @@ def run(source_path: str, enrich_with_concept: bool = False) -> tuple[str, str, 
                               l'ambiance de l'image source.
 
     Returns:
-        (local_path, public_url, filename)
+        (local_path, public_url, filename, scene_json)
+        - scene_json : JSON de scène extrait (pour génération caption contextualisée)
 
     Raises:
         FileNotFoundError : si source_path n'existe pas
@@ -114,4 +115,4 @@ def run(source_path: str, enrich_with_concept: bool = False) -> tuple[str, str, 
         f"  asyncio.run(send_for_validation('{local_path}', 'votre caption'))"
     )
 
-    return local_path, public_url, filename
+    return local_path, public_url, filename, scene_json

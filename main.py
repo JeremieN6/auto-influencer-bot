@@ -193,17 +193,17 @@ def run_pipeline(
                         category     = None if relevant == "all" else relevant
                         keyword_pool = _load_relevant_pool(category)
                         log("info", "main", f"Mode relevant : {relevant} — {len(keyword_pool)} keywords chargés")
-                    local_path, public_url, filename, source_url, search_query = run_workflow(concept, keyword_pool=keyword_pool)
+                    local_path, public_url, filename, source_url, search_query, scene_json = run_workflow(concept, keyword_pool=keyword_pool)
                     wildcard_used = None
                 elif workflow == "pinterest_inpainting":
                     from workflows.workflow_pinterest_inpainting import run as run_workflow  # type: ignore[assignment]
                     local_path, public_url, filename = run_workflow(concept)
-                    source_url, search_query = None, None
+                    source_url, search_query, scene_json = None, None, None
                     wildcard_used = None
                 elif workflow == "generatif":
                     from workflows.workflow_generatif import run as run_workflow  # type: ignore[assignment]
                     local_path, public_url, filename, wildcard_used = run_workflow(concept)
-                    source_url, search_query = None, None
+                    source_url, search_query, scene_json = None, None, None
                 elif workflow == "manual_image":
                     source_path = (override_params or {}).get("source_path")
                     is_url      = (override_params or {}).get("is_url", False)
@@ -215,7 +215,7 @@ def run_pipeline(
                         source_path = scrape_image_from_pin_url(source_path)
                         log("info", "main", f"Image Pinterest téléchargée : {source_path}")
                     from workflows.workflow_backup import run as run_backup
-                    local_path, public_url, filename = run_backup(source_path)
+                    local_path, public_url, filename, scene_json = run_backup(source_path)
                     source_url, search_query = None, None
                     wildcard_used = None
                 elif workflow == "manual_gen":
@@ -228,7 +228,7 @@ def run_pipeline(
                     from image_generator import generate_image_from_source
                     local_path, public_url = generate_image_from_source(prompt_text, source_path)
                     filename = os.path.basename(local_path)
-                    source_url, search_query = None, None
+                    source_url, search_query, scene_json = None, None, None
                     wildcard_used = None
                 elif workflow == "manual_inpaint":
                     source_path   = (override_params or {}).get("source_path")
@@ -252,7 +252,7 @@ def run_pipeline(
                         ref_body_path=_REF_BODY,
                         custom_prompt=custom_prompt,
                     )
-                    source_url, search_query = None, None
+                    source_url, search_query, scene_json = None, None, None
                     wildcard_used = None
                 break  # succès — sortir de la boucle
 
@@ -424,7 +424,7 @@ def run_pipeline(
         # Caption via Claude
         from caption_generator import generate_caption as _gen_caption
         from concept_generator import build_caption_prompt as _build_prompt
-        caption_prompt = _build_prompt(concept)
+        caption_prompt = _build_prompt(concept, step)
         caption = _gen_caption(caption_prompt)
 
         video_type = "reel"  # i2v → format vertical par défaut
@@ -497,7 +497,7 @@ def run_pipeline(
 
         from caption_generator import generate_caption as _gen_caption2
         from concept_generator import build_caption_prompt as _build_prompt2
-        caption_prompt = _build_prompt2(concept)
+        caption_prompt = _build_prompt2(concept, step)
         caption = _gen_caption2(caption_prompt)
 
         video_type = "reel"
@@ -554,9 +554,18 @@ def run_pipeline(
 
     # ── Étape 4 : Caption ────────────────────────────────────────
     log("info", "main", "=== Étape 4/4 : Génération caption (Claude) ===")
-    caption_prompt = build_caption_prompt(concept, step)
-    caption        = generate_caption(caption_prompt)
-    log("info", "main", f"Caption : {caption[:100]}...")
+    
+    # Utiliser la caption contextualisée depuis le JSON de scène si disponible
+    if scene_json:
+        from caption_generator import generate_caption_from_scene
+        caption = generate_caption_from_scene(scene_json, content_type=step["type"])
+        caption_prompt = "[Caption générée depuis JSON de scène]"
+        log("info", "main", f"Caption contextualisée générée : {caption[:100]}...")
+    else:
+        # Fallback sur l'ancien système pour les workflows sans scene_json
+        caption_prompt = build_caption_prompt(concept, step)
+        caption        = generate_caption(caption_prompt)
+        log("info", "main", f"Caption (mode legacy) : {caption[:100]}...")
 
     # ── Sauvegarde état + envoi Telegram ─────────────────────────
     state = {
@@ -622,6 +631,7 @@ def run_resume_kling(params: dict, dry_run: bool = False) -> dict:
             scene_json         : JSON de scène (motion prompt + caption)
             step               : étape calendrier (caption)
     """
+    from caption_generator import generate_caption, generate_caption_from_scene
     from kling_generator import build_motion_prompt, generate_video_motion_control
     from workflows.workflow_video_local import _build_video_caption_prompt, _expose_video_via_nginx
 
@@ -648,8 +658,12 @@ def run_resume_kling(params: dict, dry_run: bool = False) -> dict:
 
     filename, public_url = _expose_video_via_nginx(final_video_path)
 
-    caption_prompt = _build_video_caption_prompt(scene_json, step, "reel")
-    caption        = generate_caption(caption_prompt)
+    if scene_json:
+        caption = generate_caption_from_scene(scene_json, content_type="reel")
+        caption_prompt = "[Caption générée depuis JSON de scène]"
+    else:
+        caption_prompt = _build_video_caption_prompt(scene_json, step, "reel")
+        caption        = generate_caption(caption_prompt)
 
     video_state = {
         "media_type":         "video",

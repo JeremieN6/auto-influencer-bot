@@ -40,7 +40,7 @@ from pathlib import Path
 
 from PIL import Image as _PILImage
 
-from caption_generator import generate_caption
+from caption_generator import generate_caption, generate_caption_from_scene
 from concept_generator import build_caption_prompt, get_current_calendar_step
 from frame_extractor import extract_best_frame
 from image_generator import ImageSafetyError, generate_image, image_to_json, inject_madison_body, validate_body_proportions
@@ -516,9 +516,8 @@ def _run_person_branch(
 
     filename, public_url = _expose_video_via_nginx(final_video_path)
 
-    # Caption Reel
-    caption_prompt = _build_video_caption_prompt(scene_json, step, "reel")
-    caption        = generate_caption(caption_prompt)
+    # Caption Reel — utilise le JSON de scène pour une caption contextualisée
+    caption = generate_caption_from_scene(scene_json, content_type="reel")
 
     # Cleanup : supprimer la vidéo source pour vider progressivement /data/videos/
     # (uniquement si la source est dans VIDEOS_DIR — ne pas toucher aux sources manuelles)
@@ -550,15 +549,16 @@ def _run_ambiance_branch(
     log_step(__name__, 4, TOTAL_STEPS, "Flux ambiance : vidéo utilisée brute")
     log_step(__name__, 5, TOTAL_STEPS, "Génération caption ambiance")
 
+    scene_json = image_to_json(frame_path)
+    logger.info(f"JSON de scène ambiance extrait — clés : {list(scene_json.keys())}")
+
     # Nettoyer la frame temporaire
     if os.path.exists(frame_path):
         os.remove(frame_path)
         logger.debug(f"Frame temporaire supprimée : {frame_path}")
 
     filename, public_url = _expose_video_via_nginx(video_path)
-
-    caption_prompt = _build_ambiance_caption_prompt(video_path, step)
-    caption        = generate_caption(caption_prompt)
+    caption = generate_caption_from_scene(scene_json, content_type="story")
 
     # Cleanup : supprimer la vidéo source (nginx a déjà sa copie)
     # (uniquement si la source est dans VIDEOS_DIR — ne pas toucher aux sources manuelles)

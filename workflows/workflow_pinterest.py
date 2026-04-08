@@ -42,7 +42,7 @@ logger = get_logger(__name__)
 TOTAL_STEPS = 3
 
 
-def run(concept: dict, keyword_pool: list[str] | None = None) -> tuple[str, str, str]:
+def run(concept: dict, keyword_pool: list[str] | None = None) -> tuple[str, str, str, str, str, dict]:
     """
     Exécute le workflow Pinterest complet.
 
@@ -53,10 +53,13 @@ def run(concept: dict, keyword_pool: list[str] | None = None) -> tuple[str, str,
                        Si None, utilise _PERSON_KEYWORDS par défaut.
 
     Returns:
-        (local_path, public_url, filename)
+        (local_path, public_url, filename, source_url, search_query, scene_json)
         - local_path  : chemin local dans outputs/
         - public_url  : URL publique nginx (pour API Meta)
         - filename    : nom de fichier seul (pour cleanup nginx après publication)
+        - source_url  : URL de l'image Pinterest source
+        - search_query : requête de recherche Pinterest utilisée
+        - scene_json  : JSON de scène extrait (pour génération caption contextualisée)
 
     Raises:
         RuntimeError  : si Pinterest ne trouve aucune image valide
@@ -129,7 +132,7 @@ def run(concept: dict, keyword_pool: list[str] | None = None) -> tuple[str, str,
     filename = os.path.basename(local_path)
     logger.info(f"=== Workflow Pinterest terminé : {local_path} ===")
 
-    return local_path, public_url, filename, source_url, search_query
+    return local_path, public_url, filename, source_url, search_query, scene_json
 
 
 # ================================================================
