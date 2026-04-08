@@ -39,6 +39,18 @@ from logger import log, log_section, setup_logger
 from telegram_bot import save_pending_state, send_for_validation, send_video_for_validation
 
 
+async def _send_telegram_info(message: str) -> None:
+    """Envoie une notification texte simple sur Telegram si configuré."""
+    from telegram import Bot
+    from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+
+    async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+
+
 def _has_local_videos() -> bool:
     """Vérifie si /data/videos/ contient des fichiers .mp4."""
     from video_batch_manager import has_local_videos
@@ -756,9 +768,9 @@ Exemples :
 
 
 # Délai minimal entre deux runs cron consécutifs (en jours).
-# Protège contre le bug de timing du cron */4 (ex: 28 mars → 29 mars).
+# Défini dans config.py pour rester cohérent avec la cadence affichée par /status.
 # Les appels manuels avec --force ignorent ce garde-fou.
-MIN_DAYS_BETWEEN_RUNS = 3
+from config import MIN_DAYS_BETWEEN_RUNS
 
 
 if __name__ == "__main__":
@@ -813,50 +825,58 @@ if __name__ == "__main__":
         # Acquérir le lock
         _LOCK_FILE.write_text(str(os.getpid()))
 
-    # Charger les override_params depuis le fichier temp écrit par /run ou /retryKling
-    override_params: dict | None = None
-    if args.override_params:
-        import json
-        try:
-            with open(args.override_params, encoding="utf-8") as f:
-                override_params = json.load(f)
-            log("info", "main", f"Override params chargés : {list((override_params or {}).keys())}")
-        except Exception as e:
-            log("error", "main", f"Impossible de lire --override-params '{args.override_params}' : {e}")
-        finally:
-            import os as _os
-            try:
-                _os.remove(args.override_params)
-            except Exception:
-                pass
-
-    # ── Guard anti-double-run (protection cron timing) ──────────
-    # Ignore si : dry_run, --force, --resume-kling, ou premier run (historique vide)
-    if not args.dry_run and not args.force and not args.resume_kling:
-        import json as _json_guard
-        from datetime import datetime as _dt_guard
-        from pathlib import Path as _guard_path
-        _history_file = _guard_path(__file__).parent / "data" / "history.json"
-        try:
-            with open(_history_file, encoding="utf-8") as _hf:
-                _hist_guard = _json_guard.load(_hf)
-            if _hist_guard:
-                _last_run = _dt_guard.fromisoformat(_hist_guard[-1].get("generated_at", ""))
-                _elapsed_days = (_dt_guard.now() - _last_run).total_seconds() / 86400
-                if _elapsed_days < MIN_DAYS_BETWEEN_RUNS:
-                    log(
-                        "info", "main",
-                        f"Guard anti-double-run : dernier run il y a {_elapsed_days:.1f}j "
-                        f"(< {MIN_DAYS_BETWEEN_RUNS}j minimum) — pipeline ignoré.\n"
-                        f"Utiliser --force pour forcer malgré tout.",
-                    )
-                    sys.exit(0)
-        except FileNotFoundError:
-            pass  # Pas d'historique → premier run, on proceed
-        except Exception as _guard_err:
-            log("warning", "main", f"Guard anti-double-run : erreur lecture history ({_guard_err}) — proceed anyway")
-
     try:
+        # Charger les override_params depuis le fichier temp écrit par /run ou /retryKling
+        override_params: dict | None = None
+        if args.override_params:
+            import json
+            try:
+                with open(args.override_params, encoding="utf-8") as f:
+                    override_params = json.load(f)
+                log("info", "main", f"Override params chargés : {list((override_params or {}).keys())}")
+            except Exception as e:
+                log("error", "main", f"Impossible de lire --override-params '{args.override_params}' : {e}")
+            finally:
+                import os as _os
+                try:
+                    _os.remove(args.override_params)
+                except Exception:
+                    pass
+
+        # ── Guard anti-double-run (protection cron timing) ──────────
+        # Ignore si : dry_run, --force, --resume-kling, ou premier run (historique vide)
+        if not args.dry_run and not args.force and not args.resume_kling:
+            import json as _json_guard
+            from datetime import datetime as _dt_guard
+            from pathlib import Path as _guard_path
+            _history_file = _guard_path(__file__).parent / "data" / "history.json"
+            try:
+                with open(_history_file, encoding="utf-8") as _hf:
+                    _hist_guard = _json_guard.load(_hf)
+                if _hist_guard:
+                    _last_run = _dt_guard.fromisoformat(_hist_guard[-1].get("generated_at", ""))
+                    _elapsed_days = (_dt_guard.now() - _last_run).total_seconds() / 86400
+                    if _elapsed_days < MIN_DAYS_BETWEEN_RUNS:
+                        _skip_message = (
+                            f"Guard anti-double-run : dernier run il y a {_elapsed_days:.1f}j "
+                            f"(< {MIN_DAYS_BETWEEN_RUNS}j minimum) — pipeline ignoré.\n"
+                            f"Utiliser --force pour forcer malgré tout."
+                        )
+                        log("info", "main", _skip_message)
+                        try:
+                            asyncio.run(_send_telegram_info(
+                                "Pipeline auto ignoré : garde-fou anti-double-run actif.\n"
+                                f"Dernier run il y a {_elapsed_days:.1f} jour(s).\n"
+                                f"Seuil actuel : {MIN_DAYS_BETWEEN_RUNS} jour(s)."
+                            ))
+                        except Exception as _skip_notify_err:
+                            log("warning", "main", f"Notification Telegram skip échouée : {_skip_notify_err}")
+                        sys.exit(0)
+            except FileNotFoundError:
+                pass  # Pas d'historique → premier run, on proceed
+            except Exception as _guard_err:
+                log("warning", "main", f"Guard anti-double-run : erreur lecture history ({_guard_err}) — proceed anyway")
+
         # ── Mode reprise Kling (--resume-kling) ─────────────────────
         if args.resume_kling:
             if not override_params:

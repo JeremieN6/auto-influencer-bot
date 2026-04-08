@@ -257,6 +257,9 @@ Ajouter la ligne (pipeline tous les jours à midi, heure française) :
 0 12 * * * cd /opt/mybots/auto-influencer-bot && ./venv/bin/python main.py >> logs/cron.log 2>&1
 ```
 
+Par défaut, le garde-fou anti-double-run suit la cadence configurée dans `POSTING_INTERVAL_DAYS`.
+Il peut être surchargé avec la variable d'environnement `MIN_DAYS_BETWEEN_RUNS` si besoin.
+
 Vérifier que le cron est actif :
 ```bash
 crontab -l

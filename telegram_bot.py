@@ -304,7 +304,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     from concept_generator import get_schedule_preview, load_history
-    from config import POSTING_INTERVAL_DAYS
+    from config import MIN_DAYS_BETWEEN_RUNS, POSTING_INTERVAL_DAYS
     from datetime import datetime, timedelta
 
     state   = load_pending_state()
@@ -320,7 +320,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             pass
 
     if last_run:
-        next_run = last_run + timedelta(days=POSTING_INTERVAL_DAYS)
+        next_run = last_run + timedelta(days=MIN_DAYS_BETWEEN_RUNS)
         delta    = next_run - datetime.now()
         if delta.total_seconds() > 0:
             days_left = delta.days
@@ -361,6 +361,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"📊 *Status {_escape_md(INFLUENCER_NAME)}*\n\n"
         f"{pending_str}\n\n"
         f"📅 Prochain post auto : {_escape_md(next_str)}\n"
+        f"⏱ Cadence auto : {_escape_md(str(POSTING_INTERVAL_DAYS))}j \| garde\-fou : {_escape_md(str(MIN_DAYS_BETWEEN_RUNS))}j\n"
         f"📈 Total posts historique : {len(history)}"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
@@ -368,7 +369,14 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # Envoyer l'aperçu visuel du contenu en attente
     img_path = state.get("image_path")
     vid_path = state.get("video_path")
-    if img_path and os.path.exists(img_path):
+    madison_img_path = state.get("madison_image_path") if state.get("_intermediate") else None
+    if madison_img_path and os.path.exists(madison_img_path):
+        try:
+            with open(madison_img_path, "rb") as _photo:
+                await update.message.reply_photo(photo=_photo, caption="🖼️ Best frame généré \(Kling en attente\)")
+        except Exception as _e:
+            logger.warning(f"Impossible d'envoyer le best frame Madison : {_e}")
+    elif img_path and os.path.exists(img_path):
         try:
             with open(img_path, "rb") as _photo:
                 await update.message.reply_photo(photo=_photo, caption="📸 Aperçu du contenu en attente")
@@ -471,11 +479,21 @@ async def cmd_discard(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update):
         return
     state = load_pending_state()
-    if not state.get("image_path") and not state.get("video_path"):
+    if not state.get("image_path") and not state.get("video_path") and not state.get("_intermediate"):
         await _send_error(update, "Aucun contenu en attente à supprimer.")
         return
+
+    # Nettoyage des fichiers intermédiaires générés (best frame Madison)
+    madison_img = state.get("madison_image_path")
+    if madison_img and os.path.exists(madison_img):
+        try:
+            os.remove(madison_img)
+            logger.info(f"Fichier intermédiaire supprimé : {madison_img}")
+        except Exception as _e:
+            logger.warning(f"Impossible de supprimer {madison_img} : {_e}")
+
     clear_pending_state()
-    await update.message.reply_text("🗑 Contenu supprimé — aucune publication effectuée.")
+    await update.message.reply_text("🗑 Procédure annulée — fichiers nettoyés, aucune publication effectuée.")
     logger.info("Contenu en attente supprimé via /supprimer")
 
 

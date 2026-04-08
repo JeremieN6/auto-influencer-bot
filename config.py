@@ -112,6 +112,7 @@ TIKTOK_OPEN_ID      = os.getenv("TIKTOK_OPEN_ID")
 # ================================================================
 
 POSTING_INTERVAL_DAYS = 1
+MIN_DAYS_BETWEEN_RUNS = float(os.getenv("MIN_DAYS_BETWEEN_RUNS", str(POSTING_INTERVAL_DAYS)))
 HISTORY_WINDOW_DAYS   = 30
 LOG_PATH              = "logs/run.log"
 
