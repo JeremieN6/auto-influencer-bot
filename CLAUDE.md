@@ -42,7 +42,7 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
 - [x] workflows/workflow_pinterest.py — V1 complet (scrape → JSON → image)
 - [x] workflows/workflow_generatif.py — V2 scaffold avec TODO détaillé
 - [x] workflows/workflow_backup.py — dormant, activation manuelle
-- [x] telegram_bot.py — V1 complet (/status /validate /modify /generate /schedule), V2 /run scaffoldé
+- [x] telegram_bot.py — commandes Telegram étendues, avec /run comme entrée principale et /generate en alias legacy
 - [x] main.py — orchestrateur avec --dry-run et notification Telegram erreur fatale
 - [x] README.md — guide d'installation complet (clone → cron)
 - [x] .gitignore, .env.example, requirements.txt
@@ -69,7 +69,7 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
 | 2026-03-04 | `pending_state` sauvegardé dans `data/pending_state.json` | Partage d'état entre main.py (cron) et telegram_bot.py (systemd service) — 2 processus distincts |
 | 2026-03-04 | Extraction image URLs Pinterest directement depuis le DOM (pas og:image) | Plus rapide, évite d'ouvrir chaque pin individuellement — moins de risque de blocage |
 | 2026-03-04 | Nettoyage image Pinterest source après extraction JSON | Évite l'accumulation de fichiers temporaires dans outputs/ |
-| 2026-03-04 | `/generate` déclenche main.py via subprocess | Séparation propre entre le processus bot (polling) et le pipeline (cron) |
+| 2026-03-04 | Les commandes Telegram manuelles déclenchent `main.py` via subprocess | Séparation propre entre le processus bot (polling) et le pipeline (cron) |
 | 2026-03-04 | `--dry-run` flag dans main.py | Facilite les tests sans affecter l'historique ni envoyer sur Telegram |
 | 2026-04-08 | Système de queue pour posts multiples au lieu de `pending_state` unique | Permet de recevoir un nouveau post chaque jour sans bloquer si le précédent n'est pas validé — validation indépendante de chaque post via boutons inline |
 
@@ -96,5 +96,5 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
   - `send_for_validation()` et `send_video_for_validation()` créent des fichiers dans la queue avec boutons inline (queue_id)
   - Nouveaux callback handlers : `handle_validate_image()`, `handle_publish_video()`, `handle_delete_from_queue()`
   - `/status` affiche tous les posts en attente (3 premiers + compteur)
-  - Retrait de tous les blocages `_has_pending_content()` dans `/generate`, `/run`, `/manualGeneration`
+  - Retrait de tous les blocages `_has_pending_content()` dans `/run`, alias `/generate`, et `/manualGeneration`
 - Message garde-fou "0.0 jour(s)" : comportement **normal** — cron déclenché après un run récent, correctement bloqué par `MIN_DAYS_BETWEEN_RUNS`

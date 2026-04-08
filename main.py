@@ -761,7 +761,7 @@ Exemples :
         default=False,
         help=(
             "Forcer le pipeline même si le dernier run date de moins de MIN_DAYS_BETWEEN_RUNS jours. "
-            "Utilisé par les commandes Telegram manuelles (/generate, /run)."
+            "Utilisé par les commandes Telegram manuelles (/run et alias /generate)."
         ),
     )
     return parser.parse_args()

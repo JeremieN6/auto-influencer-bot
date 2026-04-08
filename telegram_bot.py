@@ -9,20 +9,20 @@ ARCHITECTURE :
      → Sauvegarde l'état dans data/pending_state.json (partage inter-process)
 
   2. Service bot (systemd) — lancé via `python telegram_bot.py`
-     → Polling Telegram API
-     → Gère les commandes utilisateur : /status /validate /modify /generate /schedule
-     → Lit pending_state depuis data/pending_state.json
+      → Polling Telegram API
+      → Gère les commandes utilisateur : /status /validate /modify /run /schedule
+      → Lit pending_state depuis data/pending_state.json
 
-COMMANDES V1 :
+COMMANDES PRINCIPALES :
   /start     → message d'accueil
   /status    → état du système + prochain post schedulé
   /validate  → approuver et publier sur Instagram
   /modify    → régénérer l'image avec une instruction supplémentaire (/modify instruction)
-  /generate  → forcer un nouveau concept aléatoire (déclenche le pipeline)
+    /run       → lancer un workflow avec sélection du mode et des paramètres
   /schedule  → afficher le calendrier des 4 prochains posts
 
-COMMANDES V2 (scaffold) :
-  /run       → lancement manuel avec choix workflow + paramètres
+COMPATIBILITÉ :
+    /generate  → alias legacy qui ouvre désormais le menu /run
 
 Prérequis : TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID dans .env
 """
@@ -371,11 +371,11 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"/validate — Publier l'image en attente\n"
         f"/modify \\[instruction\\] — Régénérer avec modification\n"
         f"/supprimer — Supprimer le contenu en attente\n"
-        f"/generate — Nouveau concept aléatoire\n"
+        f"/run — Lancer un workflow \(auto ou manuel\)\n"
         f"/schedule — Calendrier des 4 prochains posts\n"
         f"/manualGeneration — Générer depuis une image ou vidéo source\n"
         f"/retryKling — Relancer Kling si la dernière vidéo a échoué\n"
-        f"/run — Lancement manuel avancé\n"
+        f"/generate — Alias legacy vers /run\n"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -408,7 +408,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             days_left = delta.days
             next_str  = f"dans {days_left} jour(s) — {next_run.strftime('%d/%m/%Y %H:%M')}"
         else:
-            next_str = "🔴 En retard — lancer manuellement /generate"
+            next_str = "🔴 En retard — lancer manuellement /run"
     else:
         next_str = "Aucun post enregistré — premier run à venir"
 
@@ -544,32 +544,17 @@ async def cmd_discard(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Contenu en attente supprimé via /supprimer")
 
 
-async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Alias legacy — /generate ouvre désormais le menu /run."""
     if not _is_authorized(update):
-        return
+        return ConversationHandler.END
 
-    # Plus de blocage sur pending_state — la queue permet plusieurs posts en attente
-
-    try:
-        # Déclencher le pipeline en subprocess (séparation de process)
-        # --force ignore le guard anti-double-run (l'utilisateur demande explicitement)
-        python_exe = sys.executable
-        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
-        proc = subprocess.Popen(
-            [python_exe, script_path, "--force"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        logger.info(f"Pipeline déclenché via subprocess — PID {proc.pid}")
-        await update.message.reply_text(
-            f"🚀 Pipeline démarré \\(PID {proc.pid}\\)\\. "
-            f"Vous recevrez l'image ici pour validation\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-
-    except Exception as e:
-        logger.error(f"Erreur déclenchement pipeline : {e}")
-        await _send_error(update, f"Impossible de déclencher le pipeline : {e}")
+    await update.message.reply_text(
+        "ℹ️ /generate est obsolète — ouverture du menu /run\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    logger.info("Alias /generate utilisé — redirection vers /run")
+    return await cmd_run(update, ctx)
 
 async def cmd_retry_kling(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Relance l'étape Kling depuis l'état intermédiaire — /retryKling"""
@@ -1346,7 +1331,7 @@ async def _launch_run_pipeline(ctx: ContextTypes.DEFAULT_TYPE) -> None:
 def _build_run_handler() -> ConversationHandler:
     """Construit et retourne le ConversationHandler pour /run."""
     return ConversationHandler(
-        entry_points=[CommandHandler("run", cmd_run)],
+        entry_points=[CommandHandler("run", cmd_run), CommandHandler("generate", cmd_generate)],
         states={
             RUN_WORKFLOW:          [CallbackQueryHandler(run_choose_workflow)],
             RUN_MODE:              [CallbackQueryHandler(run_choose_mode)],
@@ -1854,7 +1839,6 @@ def start_bot() -> None:
     app.add_handler(CommandHandler("status",   cmd_status))
     app.add_handler(CommandHandler("validate", cmd_validate))
     app.add_handler(CommandHandler("modify",   cmd_modify))
-    app.add_handler(CommandHandler("generate", cmd_generate))
     app.add_handler(CommandHandler("schedule", cmd_schedule))
     app.add_handler(CommandHandler("retryKling", cmd_retry_kling))
     app.add_handler(CommandHandler("supprimer",    cmd_discard))

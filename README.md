@@ -350,11 +350,11 @@ C'est tout.
 | `/status` | État du système + prochain post schedulé |
 | `/validate` | Publier sur Instagram |
 | `/modify [instruction]` | Régénérer l'image avec instruction |
-| `/generate` | Déclencher un nouveau concept aléatoire |
+| `/run` | Lancement principal : choix du workflow, du mode et des paramètres |
+| `/generate` | Alias legacy vers `/run` |
 | `/schedule` | Calendrier des 4 prochains posts |
 | `/retryKling` | Relancer Kling si la dernière vidéo a échoué |
 | `/manualGeneration` | Générer depuis une image ou vidéo source donnée |
-| `/run` | Lancement manuel avancé (workflow + paramètres) |
 
 ### `/status` — 3 états possibles
 
@@ -372,7 +372,7 @@ Si le pipeline vidéo échoue lors de l'étape Kling :
 3. Seule l'étape Kling est relancée
 4. La vidéo finale est envoyée sur Telegram pour validation
 
-Si les fichiers ont disparu (redémarrage VPS), utiliser `/generate` ou `/manualGeneration`.
+Si les fichiers ont disparu (redémarrage VPS), utiliser `/run` ou `/manualGeneration`.
 
 ### `/manualGeneration` — génération depuis une source donnée
 
