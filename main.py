@@ -323,7 +323,18 @@ def run_pipeline(
                     )
                     keyword_pool_type = "reel"
                 log("info", "main", f"Pool keywords vidéo : {keyword_pool_type} (calendrier step={step_type})")
-            video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status, _search_queries = run_video_workflow(concept, pool_type=keyword_pool_type)
+
+            relevant_theme = None if relevant in (None, "all") else relevant
+            if relevant_theme:
+                log("info", "main", f"Mode relevant vidéo : thème '{relevant_theme}' (pool {keyword_pool_type})")
+            elif relevant == "all":
+                log("info", "main", "Mode relevant vidéo : all — pool complet conservé")
+
+            video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status, _search_queries = run_video_workflow(
+                concept,
+                pool_type=keyword_pool_type,
+                relevant_theme=relevant_theme,
+            )
             search_query_used = " | ".join(_search_queries) if _search_queries else ""
         if workflow == "manual_video":
             source_path = (override_params or {}).get("source_path")
@@ -734,7 +745,7 @@ Exemples :
         default=None,
         metavar="CATEGORY",
         help=(
-            "Utiliser les relevant_keywords de variables.json pour la requête Pinterest. "
+            "Utiliser un filtre relevant pour Pinterest image et video_pinterest. "
             "Sans valeur : toutes les catégories. "
             "Avec valeur : catégorie précise (lifestyle, beach, outfit)."
         ),

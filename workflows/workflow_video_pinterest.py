@@ -49,22 +49,65 @@ TOTAL_STEPS = 5
 # Scraping vidéo Pinterest
 # ================================================================
 
-def _build_video_query(variables: dict, pool_type: str = "reel") -> str:
+def _resolve_video_tags(
+    variables: dict,
+    pool_type: str = "reel",
+    relevant_theme: str | None = None,
+) -> list[str]:
+    """
+    Retourne la liste des tags vidéo disponibles pour un pool donné.
+
+    Formats supportés dans variables.json :
+    - legacy : {location: query}
+    - thématique : {theme: [query1, query2, ...]}
+    """
+    pool_key = "pinterest_video_tags_reel" if pool_type == "reel" else "pinterest_video_tags_story"
+    raw_config = variables.get(pool_key) or variables.get("pinterest_video_tags", {})
+    if not raw_config:
+        raise ValueError(f"Clé '{pool_key}' absente dans variables.json")
+
+    if isinstance(raw_config, list):
+        return raw_config
+
+    if not isinstance(raw_config, dict):
+        raise ValueError(f"Format invalide pour '{pool_key}' dans variables.json")
+
+    sample_value = next(iter(raw_config.values()), None)
+    if isinstance(sample_value, list):
+        if relevant_theme:
+            themed_tags = raw_config.get(relevant_theme)
+            if themed_tags is None:
+                available = list(raw_config.keys())
+                raise ValueError(
+                    f"Thème vidéo '{relevant_theme}' inconnu pour '{pool_key}'. "
+                    f"Disponibles : {available}"
+                )
+            return themed_tags
+        return [tag for tags in raw_config.values() for tag in tags]
+
+    if relevant_theme:
+        logger.warning(
+            f"Theme '{relevant_theme}' ignoré pour '{pool_key}' : format legacy sans sous-clés de thèmes"
+        )
+    return list(raw_config.values())
+
+
+def _build_video_query(
+    variables: dict,
+    pool_type: str = "reel",
+    relevant_theme: str | None = None,
+) -> str:
     """
     Construit une requête Pinterest orientée vidéo.
 
     Args:
         pool_type : "reel" → pinterest_video_tags_reel (pool avec personnage)
                     "story" → pinterest_video_tags_story (pool ambiance sans personnage)
+        relevant_theme : thème optionnel à sélectionner dans le pool vidéo
 
     Format : pool_tag (+ keyword person optionnel si pool reel)
     """
-    pool_key = "pinterest_video_tags_reel" if pool_type == "reel" else "pinterest_video_tags_story"
-    video_tags = variables.get(pool_key) or variables.get("pinterest_video_tags", {})
-    if not video_tags:
-        raise ValueError(f"Clé '{pool_key}' absente dans variables.json")
-
-    tag_values = list(video_tags.values())
+    tag_values = _resolve_video_tags(variables, pool_type=pool_type, relevant_theme=relevant_theme)
     chosen_tag = random.choice(tag_values)
 
     # Règle : ≤ 4 mots par requête Pinterest (évite les requêtes trop spécifiques)
@@ -289,13 +332,18 @@ def _build_video_caption_prompt(scene_json: dict, step: dict, video_type: str) -
 # Point d'entrée
 # ================================================================
 
-def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str, str, str, str, str, str]:
+def run(
+    concept: dict | None = None,
+    pool_type: str = "reel",
+    relevant_theme: str | None = None,
+) -> tuple[str, str, str, str, str, str, str]:
     """
     Exécute le workflow vidéo Pinterest complet.
 
     Args:
         pool_type : "reel" → pinterest_video_tags_reel (pool avec personnage)
                     "story" → pinterest_video_tags_story (pool ambiance POV)
+        relevant_theme : thème optionnel à sélectionner dans le pool vidéo
 
     Returns:
         (local_video_path, public_url, filename, caption, video_type,
@@ -328,7 +376,7 @@ def run(concept: dict | None = None, pool_type: str = "reel") -> tuple[str, str,
         # ── Étape 1/5 : Construire la requête + scraper Pinterest ───
         log_step(__name__, 1, TOTAL_STEPS, f"Scraping vidéo Pinterest (tentative {attempt}/{MAX_REEL_RETRIES})")
 
-        query      = _build_video_query(variables, pool_type=pool_type)
+        query      = _build_video_query(variables, pool_type=pool_type, relevant_theme=relevant_theme)
         queries_tried.append(query)
         video_path = asyncio.run(_scrape_pinterest_video(query))
         logger.info(f"Vidéo Pinterest récupérée : {video_path}")

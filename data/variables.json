@@ -112,31 +112,55 @@
   },
 
   "pinterest_video_tags_reel": {
-    "bedroom mirror":              "video mirror selfie aesthetic",
-    "beach at sunset":             "video beach baddie aesthetic",
-    "cafe terrace Paris":          "video cafe outfit baddie aesthetic",
-    "poolside luxury":             "video pool baddie aesthetic",
-    "rooftop city view":           "video rooftop baddie aesthetic",
-    "hotel room morning":          "video room baddie",
-    "forest path golden hour":     "video golden hour baddie",
-    "kitchen counter":             "video kitchen baddie aesthetic",
-    "balcony with city skyline":   "video balcony baddie",
-    "linen sofa living room":      "video cozy baddie aesthetic",
-    "outdoor terrace white stone": "video terrace baddie aesthetic"
+    "lifestyle": [
+      "video mirror selfie aesthetic",
+      "video cafe outfit baddie aesthetic",
+      "video rooftop baddie aesthetic",
+      "video room baddie",
+      "video golden hour baddie",
+      "video kitchen baddie aesthetic",
+      "video balcony baddie",
+      "video cozy baddie aesthetic",
+      "video terrace baddie aesthetic"
+    ],
+    "beach": [
+      "video beach baddie aesthetic",
+      "video pool baddie aesthetic"
+    ],
+    "outfit": [
+      "video mirror selfie aesthetic",
+      "video cafe outfit baddie aesthetic",
+      "video rooftop baddie aesthetic",
+      "video room baddie",
+      "video kitchen baddie aesthetic",
+      "video balcony baddie"
+    ]
   },
 
   "pinterest_video_tags_story": {
-    "bedroom mirror":              "video cozy room aesthetic",
-    "beach at sunset":             "video ocean waves aesthetic",
-    "cafe terrace Paris":          "video cafe ambiance aesthetic",
-    "poolside luxury":             "video pool water aesthetic",
-    "rooftop city view":           "video cityscape night aesthetic",
-    "bathroom vanity":             "video spa aesthetic",
-    "hotel room morning":          "video hotel view morning",
-    "forest path golden hour":     "video golden hour nature",
-    "kitchen counter":             "video kitchen morning aesthetic",
-    "balcony with city skyline":   "video city lights night",
-    "linen sofa living room":      "video cozy home aesthetic",
-    "outdoor terrace white stone": "video mediterranean sunset"
+    "lifestyle": [
+      "video cozy room aesthetic",
+      "video cafe ambiance aesthetic",
+      "video cityscape night aesthetic",
+      "video spa aesthetic",
+      "video hotel view morning",
+      "video golden hour nature",
+      "video kitchen morning aesthetic",
+      "video city lights night",
+      "video cozy home aesthetic"
+    ],
+    "beach": [
+      "video ocean waves aesthetic",
+      "video pool water aesthetic",
+      "video mediterranean sunset"
+    ],
+    "outfit": [
+      "video cozy room aesthetic",
+      "video cafe ambiance aesthetic",
+      "video spa aesthetic",
+      "video hotel view morning",
+      "video kitchen morning aesthetic",
+      "video city lights night"
+    ]
   }
 }
