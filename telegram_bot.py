@@ -180,6 +180,9 @@ def _empty_state() -> dict:
         "madison_image_path": None,
         "source_video_path":  None,
         "scene_json":         None,
+        "motion_control_trim_applied": False,
+        "motion_control_trim_original_duration_s": None,
+        "motion_control_trimmed_duration_s": None,
         # —— métadonnées ——
         "created_at":         None,   # horodatage ISO de création du pending
     }
@@ -296,6 +299,9 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
     # Charger le pending_state actuel et l'enregistrer dans la queue
     state = load_pending_state()
     queue_id = _save_to_queue(state)
+    trim_applied = bool(state.get("motion_control_trim_applied"))
+    trim_original_duration = state.get("motion_control_trim_original_duration_s")
+    trim_final_duration = state.get("motion_control_trimmed_duration_s")
 
     if video_type == "reel":
         type_label = "Reel"
@@ -320,9 +326,17 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
             ],
         ])
 
+    trim_line = ""
+    if trim_applied:
+        trim_line = (
+            f"✂️ Source Motion Control tronquée auto : "
+            f"{_escape_md(str(trim_original_duration))}s → {_escape_md(str(trim_final_duration))}s\n\n"
+        )
+
     text = (
         f"🎬 *Nouveau {type_label} {_escape_md(INFLUENCER_NAME)}* \u2014 en attente de validation\n\n"
         f"🗂 Type : 🎬 {type_label} \\| 📤 Destination : {_escape_md(dest_label)}\n\n"
+        f"{trim_line}"
         f"*Caption :*\n{_escape_md(caption)}\n\n"
         f"──────────────────\n"
         f"⏱ Post ID : `{_escape_md(queue_id)}`"

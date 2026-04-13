@@ -356,6 +356,23 @@ def run_pipeline(
         log("info", "main", f"Vidéo générée : {video_path} | type={video_type}")
         log("info", "main", f"Caption : {caption[:100]}...")
 
+        motion_control_meta = {
+            "trim_applied": False,
+            "original_duration_s": None,
+            "trimmed_duration_s": None,
+        }
+        if video_type == "reel":
+            from kling_generator import get_last_motion_control_metadata
+            motion_control_meta = get_last_motion_control_metadata()
+            if motion_control_meta.get("trim_applied"):
+                log(
+                    "info",
+                    "main",
+                    "Motion Control : trim auto appliqué "
+                    f"({motion_control_meta.get('original_duration_s')}s → "
+                    f"{motion_control_meta.get('trimmed_duration_s')}s)",
+                )
+
         video_state = {
             "media_type":         "video",
             "video_path":         video_path,
@@ -373,6 +390,9 @@ def run_pipeline(
             "concept":        concept,
             "step":           step,
             "last_prompt":    None,
+            "motion_control_trim_applied": motion_control_meta.get("trim_applied", False),
+            "motion_control_trim_original_duration_s": motion_control_meta.get("original_duration_s"),
+            "motion_control_trimmed_duration_s": motion_control_meta.get("trimmed_duration_s"),
         }
 
         if dry_run:
@@ -643,7 +663,7 @@ def run_resume_kling(params: dict, dry_run: bool = False) -> dict:
             step               : étape calendrier (caption)
     """
     from caption_generator import generate_caption, generate_caption_from_scene
-    from kling_generator import build_motion_prompt, generate_video_motion_control
+    from kling_generator import build_motion_prompt, generate_video_motion_control, get_last_motion_control_metadata
     from workflows.workflow_video_local import _build_video_caption_prompt, _expose_video_via_nginx
 
     madison_image_path = params["madison_image_path"]
@@ -666,6 +686,15 @@ def run_resume_kling(params: dict, dry_run: bool = False) -> dict:
         source_video_path=source_video_path,
         motion_prompt=motion_prompt,
     )
+    motion_control_meta = get_last_motion_control_metadata()
+    if motion_control_meta.get("trim_applied"):
+        log(
+            "info",
+            "main",
+            "RESUME KLING : trim auto appliqué "
+            f"({motion_control_meta.get('original_duration_s')}s → "
+            f"{motion_control_meta.get('trimmed_duration_s')}s)",
+        )
 
     filename, public_url = _expose_video_via_nginx(final_video_path)
 
@@ -692,6 +721,9 @@ def run_resume_kling(params: dict, dry_run: bool = False) -> dict:
         "concept":            None,
         "step":               step,
         "last_prompt":        None,
+        "motion_control_trim_applied": motion_control_meta.get("trim_applied", False),
+        "motion_control_trim_original_duration_s": motion_control_meta.get("original_duration_s"),
+        "motion_control_trimmed_duration_s": motion_control_meta.get("trimmed_duration_s"),
     }
 
     if dry_run:

@@ -63,9 +63,15 @@ _NGINX_DEFAULT_PLACEHOLDER = "ton-domaine.com"
 
 # Polling : attente que Kling ait fini de générer la vidéo
 POLL_INTERVAL_S = 10   # secondes entre chaque vérification
-POLL_MAX        = 72   # max 72 * 10s = 720s = 12 min
+POLL_MAX        = 108  # max 108 * 10s = 1080s = 18 min
 MOTION_CONTROL_MAX_SOURCE_DURATION_S = 30
 MOTION_CONTROL_TRIM_DURATION_S = 20
+
+_LAST_MOTION_CONTROL_METADATA = {
+    "trim_applied": False,
+    "original_duration_s": None,
+    "trimmed_duration_s": None,
+}
 
 # ================================================================
 # Conversion vidéo H.264
@@ -158,6 +164,11 @@ def _trim_video_for_motion_control(video_path: str, trim_duration_s: int = MOTIO
     except Exception as e:
         logger.warning(f"Trim vidéo Motion Control impossible : {e} — utilisation vidéo originale")
         return video_path
+
+
+def get_last_motion_control_metadata() -> dict:
+    """Retourne les métadonnées du dernier run Motion Control dans ce process."""
+    return dict(_LAST_MOTION_CONTROL_METADATA)
 
 
 # Scènes → hints de mouvement pour le motion prompt
@@ -407,6 +418,13 @@ def generate_video_motion_control(
     logger.info(f"Source video    : {source_video_path}")
     logger.info(f"Modèle          : {KLING_MODEL}")
 
+    global _LAST_MOTION_CONTROL_METADATA
+    _LAST_MOTION_CONTROL_METADATA = {
+        "trim_applied": False,
+        "original_duration_s": None,
+        "trimmed_duration_s": None,
+    }
+
     # ── Conversion H.264 (prévient l'erreur Kling code 1201) ─────
     source_video_path = _ensure_h264_mp4(source_video_path)
 
@@ -419,6 +437,7 @@ def generate_video_motion_control(
         source_duration = _get_video_duration(source_video_path)
         if source_duration > max_source_duration:
             if character_orientation == "video":
+                original_duration = source_duration
                 logger.warning(
                     f"Vidéo source trop longue pour Motion Control ({source_duration:.1f}s) — "
                     f"trim auto aux {MOTION_CONTROL_TRIM_DURATION_S} premières secondes."
@@ -428,6 +447,12 @@ def generate_video_motion_control(
                     trim_duration_s=MOTION_CONTROL_TRIM_DURATION_S,
                 )
                 source_duration = _get_video_duration(source_video_path)
+                if source_duration <= max_source_duration:
+                    _LAST_MOTION_CONTROL_METADATA = {
+                        "trim_applied": True,
+                        "original_duration_s": round(original_duration, 1),
+                        "trimmed_duration_s": round(source_duration, 1),
+                    }
 
             if source_duration > max_source_duration:
                 raise ValueError(
