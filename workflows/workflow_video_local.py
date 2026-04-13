@@ -33,7 +33,6 @@ Appelé par : main.py via --workflow video_local
 
 import json
 import os
-import random
 import re
 import shutil
 from pathlib import Path
@@ -285,7 +284,8 @@ def _pick_random_video(videos_dir: str, dry_run: bool = False) -> str:
                     "Ajouter des fichiers .mp4/.mov dans temp/videos/ avec le préfixe v0-, v1-, etc."
                 )
 
-    chosen = random.choice(unused)
+    unused = sorted(unused, key=lambda path: path.name.lower())
+    chosen = unused[0]
     logger.info(
         f"Vidéo sélectionnée : {chosen.name} "
         f"({len(unused) - 1} restantes, wave {history.get('wave', -1)})"
