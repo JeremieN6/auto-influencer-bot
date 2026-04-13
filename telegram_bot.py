@@ -1125,11 +1125,11 @@ async def run_mc_what(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if choice == "mc_image_only":
         # Mauvais workflow — rediriger vers 🎬 Vidéo (Image-to-Video)
         await query.edit_message_text(
-            "❌ *Ce n'est pas le bon workflow\\.* \\n\\n"
-            "*Kling Motion Control* nécessite une vidéo source pour les mouvements\\.\\n\\n"
-            "Reviens au menu et utilise le bouton *🎬 Vidéo* :\\n"
-            "\\→ Tu fournis ton image \\+ un prompt textuel qui décrit les mouvements\\n"
-            "\\→ Kling anime l'image directement, sans vidéo source\\n\\n"
+            "❌ *Ce n'est pas le bon workflow\\.* \n\n"
+            "*Kling Motion Control* nécessite une vidéo source pour les mouvements\\.\n\n"
+            "Reviens au menu et utilise le bouton *🎬 Vidéo* :\n"
+            "\\→ Tu fournis ton image \\+ un prompt textuel qui décrit les mouvements\n"
+            "\\→ Kling anime l'image directement, sans vidéo source\n\n"
             "Tape /run pour revenir au menu\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
@@ -1139,14 +1139,14 @@ async def run_mc_what(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if choice == "mc_video_only":
         ctx.user_data["run_workflow"] = "manual_video"
         await query.edit_message_text(
-            "📹 *Kling Motion Control — Vidéo source uniquement*\\n\\n"
-            "Gemini va générer l'image influenceuse automatiquement depuis le meilleur frame\\.\\n\\n"
-            "Pipeline :\\n"
-            "  1\\. Extraction du meilleur frame de ta vidéo\\n"
-            "  2\\. Gemini analyse la scène et génère l'image influenceuse\\n"
-            "  3\\. Kling transfère les mouvements\\n\\n"
-            "⏱ Temps estimé : 10\\-15 minutes\\n\\n"
-            "📤 Envoie ta vidéo source \\(\\.mp4, \\.mov\\)\\n"
+            "📹 *Kling Motion Control — Vidéo source uniquement*\n\n"
+            "Gemini va générer l'image influenceuse automatiquement depuis le meilleur frame\\.\n\n"
+            "Pipeline :\n"
+            "  1\\. Extraction du meilleur frame de ta vidéo\n"
+            "  2\\. Gemini analyse la scène et génère l'image influenceuse\n"
+            "  3\\. Kling transfère les mouvements\n\n"
+            "⏱ Temps estimé : 10\\-15 minutes\n\n"
+            "📤 Envoie ta vidéo source \\(\\.mp4, \\.mov\\)\n"
             "ou /cancel pour annuler",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
@@ -1155,12 +1155,12 @@ async def run_mc_what(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if choice == "mc_image_video":
         ctx.user_data["run_workflow"] = "video_mc"
         await query.edit_message_text(
-            "🖼️📹 *Kling Motion Control — Image \\+ Vidéo source*\\n\\n"
-            "⚠️ L'image doit *déjà ressembler à l'influenceuse*\\n"
-            "\\(générée via Gemini — pas une photo quelconque\\)\\n\\n"
-            "Kling appliquera les mouvements de ta vidéo directement sur cette image\\.\\n\\n"
-            "⏱ Temps estimé : 5\\-12 minutes\\n\\n"
-            "📎 Envoie d'abord l'image de l'influenceuse en pièce jointe\\n"
+            "🖼️📹 *Kling Motion Control — Image \\+ Vidéo source*\n\n"
+            "⚠️ L'image doit *déjà ressembler à l'influenceuse*\n"
+            "\\(générée via Gemini — pas une photo quelconque\\)\n\n"
+            "Kling appliquera les mouvements de ta vidéo directement sur cette image\\.\n\n"
+            "⏱ Temps estimé : 5\\-12 minutes\n\n"
+            "📎 Envoie d'abord l'image de l'influenceuse en pièce jointe\n"
             "ou /cancel pour annuler",
             parse_mode=ParseMode.MARKDOWN_V2,
         )

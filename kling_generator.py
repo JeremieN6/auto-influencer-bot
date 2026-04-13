@@ -64,6 +64,8 @@ _NGINX_DEFAULT_PLACEHOLDER = "ton-domaine.com"
 # Polling : attente que Kling ait fini de générer la vidéo
 POLL_INTERVAL_S = 10   # secondes entre chaque vérification
 POLL_MAX        = 72   # max 72 * 10s = 720s = 12 min
+MOTION_CONTROL_MAX_SOURCE_DURATION_S = 30
+MOTION_CONTROL_TRIM_DURATION_S = 20
 
 # ================================================================
 # Conversion vidéo H.264
@@ -115,6 +117,46 @@ def _ensure_h264_mp4(video_path: str) -> str:
         return output_path
     except Exception as e:
         logger.warning(f"Conversion H.264 impossible : {e} — utilisation vidéo originale")
+        return video_path
+
+
+def _trim_video_for_motion_control(video_path: str, trim_duration_s: int = MOTION_CONTROL_TRIM_DURATION_S) -> str:
+    """
+    Tronque une vidéo aux premières secondes utiles pour Motion Control.
+
+    Utilisé comme garde-fou pour les sources > 30s afin de rester compatibles
+    avec Kling tout en conservant le hook du début de vidéo.
+
+    Returns:
+        str : chemin de la vidéo tronquée, ou chemin original si le trim échoue.
+    """
+    path = Path(video_path)
+    output_path = str(Path(OUTPUTS_DIR) / f"{path.stem}_mc{trim_duration_s}s.mp4")
+
+    try:
+        ffmpeg = _get_ffmpeg_exe()
+        cmd = [
+            ffmpeg,
+            "-i", str(path),
+            "-t", str(trim_duration_s),
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-metadata:s:v:0", "rotate=0",
+            "-y", output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if result.returncode != 0:
+            logger.warning(
+                f"Trim vidéo Motion Control échoué (code {result.returncode}) — "
+                f"utilisation vidéo originale. Stderr: {result.stderr[-200:]}"
+            )
+            return video_path
+        logger.info(f"Vidéo tronquée pour Motion Control : {output_path}")
+        return output_path
+    except Exception as e:
+        logger.warning(f"Trim vidéo Motion Control impossible : {e} — utilisation vidéo originale")
         return video_path
 
 
@@ -368,6 +410,36 @@ def generate_video_motion_control(
     # ── Conversion H.264 (prévient l'erreur Kling code 1201) ─────
     source_video_path = _ensure_h264_mp4(source_video_path)
 
+    # ── Valider la durée de la vidéo source ───────────────────
+    # Motion Control n'accepte PAS de paramètre "duration" — la durée de sortie
+    # est égale à celle de la vidéo source, dans la limite imposée par character_orientation :
+    #   "video" → max 30s  |  "image" → max 10s
+    max_source_duration = MOTION_CONTROL_MAX_SOURCE_DURATION_S if character_orientation == "video" else 10
+    try:
+        source_duration = _get_video_duration(source_video_path)
+        if source_duration > max_source_duration:
+            if character_orientation == "video":
+                logger.warning(
+                    f"Vidéo source trop longue pour Motion Control ({source_duration:.1f}s) — "
+                    f"trim auto aux {MOTION_CONTROL_TRIM_DURATION_S} premières secondes."
+                )
+                source_video_path = _trim_video_for_motion_control(
+                    source_video_path,
+                    trim_duration_s=MOTION_CONTROL_TRIM_DURATION_S,
+                )
+                source_duration = _get_video_duration(source_video_path)
+
+            if source_duration > max_source_duration:
+                raise ValueError(
+                    f"Vidéo source trop longue ({source_duration:.1f}s) — "
+                    f"character_orientation='{character_orientation}' limite à {max_source_duration}s."
+                )
+        logger.info(f"Durée vidéo source : {source_duration:.1f}s (max {max_source_duration}s)")
+    except ValueError:
+        raise
+    except Exception:
+        logger.warning("Impossible de lire la durée de la vidéo source — validation ignorée")
+
     # ── Préparer les fichiers selon le mode de transport ─────────
     if _nginx_is_configured():
         # Mode VPS : exposer via nginx → URLs publiques
@@ -393,24 +465,6 @@ def generate_video_motion_control(
         "Authorization": f"Bearer {token}",
         "Content-Type":  "application/json",
     }
-
-    # ── Valider la durée de la vidéo source ───────────────────
-    # Motion Control n'accepte PAS de paramètre "duration" — la durée de sortie
-    # est égale à celle de la vidéo source, dans la limite imposée par character_orientation :
-    #   "video" → max 30s  |  "image" → max 10s
-    max_source_duration = 30 if character_orientation == "video" else 10
-    try:
-        source_duration = _get_video_duration(source_video_path)
-        if source_duration > max_source_duration:
-            raise ValueError(
-                f"Vidéo source trop longue ({source_duration:.1f}s) — "
-                f"character_orientation='{character_orientation}' limite à {max_source_duration}s."
-            )
-        logger.info(f"Durée vidéo source : {source_duration:.1f}s (max {max_source_duration}s)")
-    except ValueError:
-        raise
-    except Exception:
-        logger.warning("Impossible de lire la durée de la vidéo source — validation ignorée")
 
     # Selon la doc Kling : image_url accepte une URL OU un Base64 brut (sans préfixe data:)
     payload: dict = {
