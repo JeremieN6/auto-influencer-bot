@@ -54,6 +54,22 @@ class ImageSafetyError(ValueError):
     pass
 
 
+def _is_transient_gemini_error(error: Exception) -> bool:
+    """Détecte les erreurs Gemini transitoires qui méritent un retry."""
+    message = str(error).upper()
+    transient_markers = (
+        "500 INTERNAL",
+        "INTERNAL ERROR ENCOUNTERED",
+        "503 UNAVAILABLE",
+        "RESOURCE_EXHAUSTED",
+        "OVERLOADED",
+        "TRY AGAIN LATER",
+        "EXPERIENCING HIGH DEMAND",
+        "DEADLINE_EXCEEDED",
+    )
+    return any(marker in message for marker in transient_markers)
+
+
 # ================================================================
 # Helpers internes
 # ================================================================
@@ -369,6 +385,15 @@ def generate_image(prompt_text: str, max_retries: int = 3, aspect_ratio: str | N
             last_error = e
             logger.error(f"Tentative {attempt}/{max_retries} échouée : {e}")
 
+        except Exception as e:
+            last_error = e
+            if _is_transient_gemini_error(e) and attempt < max_retries:
+                logger.warning(
+                    f"Tentative {attempt}/{max_retries} — erreur Gemini transitoire : {e}"
+                )
+                continue
+            raise
+
     raise ValueError(
         f"Gemini n'a pas retourné d'image après {max_retries} tentatives. "
         f"Dernière erreur : {last_error}"
@@ -488,35 +513,52 @@ def image_to_json(image_path: str) -> dict:
     data, mime = _pil_to_bytes(img)
     img_part   = types.Part.from_bytes(data=data, mime_type=mime)
 
-    response = _client.models.generate_content(
-        model=GEMINI_MODEL_VISION,
-        contents=[PROMPT_IMAGE_TO_JSON, img_part],
-    )
-    raw_text = (response.text or "").strip()
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            if attempt > 1:
+                wait = random.uniform(3, 8)
+                logger.warning(f"image_to_json tentative {attempt}/3 — pause {wait:.1f}s avant retry...")
+                import time; time.sleep(wait)
 
-    if not raw_text:
-        raise ValueError(
-            f"Gemini ({GEMINI_MODEL_VISION}) a retourné une réponse vide pour image_to_json.\n"
-            "Vérifier que GEMINI_MODEL_VISION est bien un modèle texte+vision "
-            "(ex: gemini-2.0-flash) et non un modèle de génération d'image."
-        )
+            response = _client.models.generate_content(
+                model=GEMINI_MODEL_VISION,
+                contents=[PROMPT_IMAGE_TO_JSON, img_part],
+            )
+            raw_text = (response.text or "").strip()
 
-    logger.debug(f"Réponse brute Gemini (extrait) : {raw_text[:300]}...")
+            if not raw_text:
+                raise ValueError(
+                    f"Gemini ({GEMINI_MODEL_VISION}) a retourné une réponse vide pour image_to_json.\n"
+                    "Vérifier que GEMINI_MODEL_VISION est bien un modèle texte+vision "
+                    "(ex: gemini-2.0-flash) et non un modèle de génération d'image."
+                )
 
-    # Nettoyer les éventuels backticks de markdown
-    if raw_text.startswith("```"):
-        raw_text = raw_text.split("```")[1]
-        if raw_text.startswith("json"):
-            raw_text = raw_text[4:]
-        raw_text = raw_text.strip()
+            logger.debug(f"Réponse brute Gemini (extrait) : {raw_text[:300]}...")
 
-    try:
-        scene_json = json.loads(raw_text)
-        logger.info("JSON de scène parsé avec succès")
-        return scene_json
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON invalide retourné par Gemini : {e}\nContenu : {raw_text[:500]}")
-        raise ValueError(f"Gemini a retourné un JSON invalide : {e}") from e
+            # Nettoyer les éventuels backticks de markdown
+            if raw_text.startswith("```"):
+                raw_text = raw_text.split("```")[1]
+                if raw_text.startswith("json"):
+                    raw_text = raw_text[4:]
+                raw_text = raw_text.strip()
+
+            try:
+                scene_json = json.loads(raw_text)
+                logger.info("JSON de scène parsé avec succès")
+                return scene_json
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON invalide retourné par Gemini : {e}\nContenu : {raw_text[:500]}")
+                raise ValueError(f"Gemini a retourné un JSON invalide : {e}") from e
+
+        except Exception as e:
+            last_error = e
+            if _is_transient_gemini_error(e) and attempt < 3:
+                logger.warning(f"image_to_json tentative {attempt}/3 — erreur Gemini transitoire : {e}")
+                continue
+            raise
+
+    raise ValueError(f"image_to_json a échoué après retries. Dernière erreur : {last_error}")
 
 
 # ================================================================
