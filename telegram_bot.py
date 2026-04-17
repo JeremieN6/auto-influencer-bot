@@ -55,6 +55,21 @@ from logger import get_logger, setup_logger
 
 logger = get_logger(__name__)
 
+_TELEGRAM_CONNECT_TIMEOUT_S = 30
+_TELEGRAM_READ_TIMEOUT_S = 300
+_TELEGRAM_WRITE_TIMEOUT_S = 300
+_TELEGRAM_POOL_TIMEOUT_S = 30
+
+
+def _telegram_timeout_kwargs() -> dict:
+    """Time budget étendu pour les uploads Telegram de médias générés."""
+    return {
+        "connect_timeout": _TELEGRAM_CONNECT_TIMEOUT_S,
+        "read_timeout": _TELEGRAM_READ_TIMEOUT_S,
+        "write_timeout": _TELEGRAM_WRITE_TIMEOUT_S,
+        "pool_timeout": _TELEGRAM_POOL_TIMEOUT_S,
+    }
+
 
 def _escape_md(text: str) -> str:
     """Échappe les caractères spéciaux MarkdownV2 dans du contenu dynamique."""
@@ -277,6 +292,7 @@ async def send_for_validation(
                 caption=text,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_markup=keyboard,
+                **_telegram_timeout_kwargs(),
             )
 
     # Nettoyer le pending_state après avoir mis en queue
@@ -350,6 +366,7 @@ async def send_video_for_validation(video_path: str, caption: str, video_type: s
                 caption=text,
                 reply_markup=keyboard,
                 parse_mode=ParseMode.MARKDOWN_V2,
+                **_telegram_timeout_kwargs(),
             )
 
     # Nettoyer le pending_state après avoir mis en queue
@@ -791,7 +808,7 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         ])
         await query.edit_message_text(
             "🎬 *Kling Motion Control*\n\n"
-            "Qu'est\-ce que tu as disponible ?\n\n"
+            "Qu'est\-ce que tu as de disponible comme source ?\n\n"
             "📹 *Vidéo source seulement*\n"
             "  → Gemini génère automatiquement l'image influenceuse avant Kling\n\n"
             "🖼️📹 *Image \+ Vidéo source*\n"
@@ -830,7 +847,7 @@ async def run_choose_workflow(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
             "✂️ *Remplacer personnage*\n\n"
             "*Comment ça marche :*\n"
             "📄 Tu envoies une photo avec une personne\n"
-            "rembg détecte et masque la personne automatiquement\n"
+            "L'outil dans le script détecte et masque la personne automatiquement\n"
             "Gemini remplace en *préservant le décor, la lumière et la composition*\n\n"
             f"*Références influenceuse :*\n{refs_status}\n\n"
             "──────────────────\n\n"

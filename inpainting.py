@@ -145,7 +145,34 @@ def _save_image_from_response(response, filename: str) -> str:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
     local_path = os.path.join(OUTPUTS_DIR, filename)
 
-    for part in response.candidates[0].content.parts:
+    # Vérifications null-safe : candidates peut être None ou vide si le modèle
+    # refuse la requête (safety filter) ou si le modèle ne supporte pas l'image.
+    candidates = getattr(response, "candidates", None)
+    if not candidates:
+        raise ValueError(
+            "Gemini a retourné une réponse sans candidates (requête bloquée ou modèle invalide).\n"
+            f"Modèle utilisé : {GEMINI_MODEL_INPAINTING}\n"
+            f"Réponse complète : {response}"
+        )
+
+    content = getattr(candidates[0], "content", None)
+    if content is None:
+        raise ValueError(
+            "Gemini candidate[0].content est None (refus safety ou erreur modèle).\n"
+            f"Modèle utilisé : {GEMINI_MODEL_INPAINTING}\n"
+            f"finish_reason : {getattr(candidates[0], 'finish_reason', 'unknown')}"
+        )
+
+    parts = getattr(content, "parts", None)
+    if parts is None:
+        raise ValueError(
+            "Gemini candidate[0].content.parts est None — le modèle n'a pas généré d'image.\n"
+            "Vérifier que le modèle supporte bien l'édition d'image (inpainting natif).\n"
+            f"Modèle utilisé : {GEMINI_MODEL_INPAINTING}\n"
+            f"Réponse complète : {response}"
+        )
+
+    for part in parts:
         if hasattr(part, "inline_data") and part.inline_data:
             with open(local_path, "wb") as f:
                 f.write(part.inline_data.data)

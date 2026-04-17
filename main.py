@@ -332,6 +332,23 @@ def run_pipeline(
                 log("info", "main", "Nouveau batch vidéo transféré dans /data/videos/")
             elif not _has_local_videos():
                 log("info", "main", "Plus de vidéos locales — prochains runs via calendrier")
+        elif workflow == "manual_video":
+            source_path = (override_params or {}).get("source_path")
+            if not source_path:
+                raise ValueError("manual_video requiert 'source_path' dans override_params")
+            from workflows.workflow_video_local import run_from_path as _run_video_manual
+            from image_generator import ImageSafetyError as _ImgSafetyErr2, enable_safety_fallback as _esf2, disable_safety_fallback as _dsf2
+            try:
+                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status = _run_video_manual(source_path, concept)
+            except _ImgSafetyErr2:
+                log("warning", "main", "IMAGE_SAFETY/OTHER sur manual_video — activation fallback sanitisé")
+                _esf2()
+                try:
+                    video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status = _run_video_manual(source_path, concept)
+                except _ImgSafetyErr2:
+                    raise ValueError("IMAGE_SAFETY/OTHER persistant sur manual_video — abandon")
+                finally:
+                    _dsf2()
         else:
             from workflows.workflow_video_pinterest import run as run_video_workflow  # type: ignore[assignment]
             if pool in ("reel", "story"):
@@ -364,23 +381,6 @@ def run_pipeline(
                 relevant_theme=relevant_theme,
             )
             search_query_used = " | ".join(_search_queries) if _search_queries else ""
-        if workflow == "manual_video":
-            source_path = (override_params or {}).get("source_path")
-            if not source_path:
-                raise ValueError("manual_video requiert 'source_path' dans override_params")
-            from workflows.workflow_video_local import run_from_path as _run_video_manual
-            from image_generator import ImageSafetyError as _ImgSafetyErr2, enable_safety_fallback as _esf2, disable_safety_fallback as _dsf2
-            try:
-                video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status = _run_video_manual(source_path, concept)
-            except _ImgSafetyErr2:
-                log("warning", "main", "IMAGE_SAFETY/OTHER sur manual_video — activation fallback sanitisé")
-                _esf2()
-                try:
-                    video_path, video_public_url, video_filename, caption, video_type, madison_image_path, source_video_path, body_status = _run_video_manual(source_path, concept)
-                except _ImgSafetyErr2:
-                    raise ValueError("IMAGE_SAFETY/OTHER persistant sur manual_video — abandon")
-                finally:
-                    _dsf2()
         log("info", "main", f"Vidéo générée : {video_path} | type={video_type}")
         log("info", "main", f"Caption : {caption[:100]}...")
 

@@ -40,7 +40,7 @@ NOTE : n'affecte pas history.json ni le calendrier éditorial automatique.
 import json
 import os
 
-from image_generator import generate_image, image_to_json
+from image_generator import generate_image, image_to_json, inject_madison_body, validate_body_proportions
 from logger import get_logger, log_section, log_step
 from prompts import PROMPT_JSON_TO_IMAGE
 
@@ -80,6 +80,11 @@ def run(source_path: str, enrich_with_concept: bool = False) -> tuple[str, str, 
     scene_json = image_to_json(source_path)
     logger.info(f"JSON extrait — clés : {list(scene_json.keys())}")
 
+    # Injection corps Madison — même logique que workflow_video_local._run_person_branch()
+    # Garantit les proportions hourglass + visage Madison indépendamment de l'image source.
+    scene_json = inject_madison_body(scene_json)
+    logger.info("Bloc corps Madison injecté dans le JSON de scène")
+
     # ── Enrichissement optionnel avec un concept aléatoire ──────
     if enrich_with_concept:
         from concept_generator import generate_concept
@@ -106,6 +111,18 @@ def run(source_path: str, enrich_with_concept: bool = False) -> tuple[str, str, 
     )
     local_path, public_url = generate_image(prompt_text)
     filename = os.path.basename(local_path)
+
+    # Validation proportions + 1 retry si corps insuffisant (même logique que video_local)
+    body_ok = validate_body_proportions(local_path)
+    if not body_ok:
+        logger.warning("Proportions corps insuffisantes — 1 retry génération...")
+        try:
+            local_path, public_url = generate_image(prompt_text)
+            filename = os.path.basename(local_path)
+            body_ok = validate_body_proportions(local_path)
+            logger.info(f"Corps après retry : {'✓ OK' if body_ok else '⚠ non validé (image conservée)'}")
+        except Exception as _retry_err:
+            logger.warning(f"Retry échoué ({_retry_err}) — image initiale conservée")
 
     logger.info(f"=== Workflow Backup terminé : {local_path} ===")
     logger.info(
