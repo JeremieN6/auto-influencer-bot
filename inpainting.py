@@ -26,6 +26,7 @@ SDK : google-genai (même SDK que image_generator.py)
 import io
 import os
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -40,6 +41,7 @@ from config import (
     NGINX_OUTPUT_DIR,
     OUTPUTS_DIR,
 )
+from image_generator import ImageSafetyError, _is_transient_gemini_error, _sanitize_prompt_for_safety
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -71,6 +73,15 @@ PRESERVE UNCHANGED from the source photo:
 
 The final image must look as if {influencer_name} was always naturally in this scene.
 Photorealistic, seamless, 4K quality."""
+
+
+INPAINTING_PROMPT_FALLBACK_TEMPLATE = """Replace only the person inside the white mask with {influencer_name}.
+
+Return one single photorealistic photo, not a collage.
+Preserve the original pose, outfit, camera angle, framing, lighting, background and objects.
+Use the attached face reference to match {influencer_name}'s identity closely.
+Keep the body natural and consistent with the original person's silhouette and clothing.
+Do not change anything outside the masked region."""
 
 
 # ================================================================
@@ -155,18 +166,31 @@ def _save_image_from_response(response, filename: str) -> str:
             f"Réponse complète : {response}"
         )
 
-    content = getattr(candidates[0], "content", None)
+    candidate = candidates[0]
+    finish_reason = getattr(candidate, "finish_reason", None)
+    finish_reason_str = str(finish_reason) if finish_reason else ""
+    if finish_reason and finish_reason_str not in ("FinishReason.STOP", "STOP", "1"):
+        logger.warning(f"Gemini finish_reason inattendu (inpainting) : {finish_reason}")
+
+    content = getattr(candidate, "content", None)
     if content is None:
-        raise ValueError(
+        raise ImageSafetyError(
             "Gemini candidate[0].content est None (refus safety ou erreur modèle).\n"
             f"Modèle utilisé : {GEMINI_MODEL_INPAINTING}\n"
-            f"finish_reason : {getattr(candidates[0], 'finish_reason', 'unknown')}"
+            f"finish_reason : {finish_reason or 'unknown'}"
         )
 
     parts = getattr(content, "parts", None)
-    if parts is None:
+    if not parts:
+        if "IMAGE_SAFETY" in finish_reason_str or "IMAGE_OTHER" in finish_reason_str:
+            raise ImageSafetyError(
+                "Gemini n'a pas généré d'image pour la tentative inpainting.\n"
+                f"finish_reason : {finish_reason_str or 'unknown'}\n"
+                f"Modèle utilisé : {GEMINI_MODEL_INPAINTING}\n"
+                f"Réponse complète : {response}"
+            )
         raise ValueError(
-            "Gemini candidate[0].content.parts est None — le modèle n'a pas généré d'image.\n"
+            "Gemini candidate[0].content.parts est vide — le modèle n'a pas généré d'image.\n"
             "Vérifier que le modèle supporte bien l'édition d'image (inpainting natif).\n"
             f"Modèle utilisé : {GEMINI_MODEL_INPAINTING}\n"
             f"Réponse complète : {response}"
@@ -202,6 +226,20 @@ def _copy_to_nginx(local_path: str, filename: str) -> str:
     except Exception as e:
         logger.error(f"Erreur copie nginx : {e}")
         raise
+
+
+def _build_inpainting_attempts(prompt: str, influencer_name: str) -> list[tuple[str, bool, str]]:
+    """Construit les variantes de prompt/fallback pour l'inpainting."""
+    attempts: list[tuple[str, bool, str]] = []
+    attempts.append((prompt, True, "prompt complet + refs visage/corps"))
+
+    sanitized_prompt = _sanitize_prompt_for_safety(prompt)
+    if sanitized_prompt != prompt:
+        attempts.append((sanitized_prompt, True, "prompt sanitisé + refs visage/corps"))
+
+    fallback_prompt = INPAINTING_PROMPT_FALLBACK_TEMPLATE.format(influencer_name=influencer_name)
+    attempts.append((fallback_prompt, False, "prompt simplifié + ref visage seule"))
+    return attempts
 
 
 # ================================================================
@@ -243,7 +281,7 @@ def replace_person(
 
     # ── Étape 2 : Préparation des parts Gemini ────────────────────
     logger.info("Étape 2/3 : Chargement des références et appel Gemini...")
-    prompt = (
+    base_prompt = (
         custom_prompt.strip()
         if custom_prompt.strip()
         else INPAINTING_PROMPT_TEMPLATE.format(influencer_name=influencer_name)
@@ -254,23 +292,61 @@ def replace_person(
     ref_face_part = _load_image_as_part(ref_face_path)
     ref_body_part = _load_image_as_part(ref_body_path)
 
-    logger.debug(f"Prompt inpainting : {prompt[:200]}...")
+    attempts = _build_inpainting_attempts(base_prompt, influencer_name)
+    last_error: Exception | None = None
 
-    # Ordre de passage : source → masque → ref_face → ref_body → prompt texte
-    # Gemini interprète le masque blanc comme la zone à éditer
-    response = _client.models.generate_content(
-        model=GEMINI_MODEL_INPAINTING,
-        contents=[source_part, mask_part, ref_face_part, ref_body_part, prompt],
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE", "TEXT"],
-        ),
+    for attempt_index, (attempt_prompt, include_body_ref, label) in enumerate(attempts, start=1):
+        try:
+            if attempt_index > 1:
+                wait_s = 2 * attempt_index
+                logger.warning(
+                    f"Inpainting retry {attempt_index}/{len(attempts)} — {label} — pause {wait_s}s"
+                )
+                time.sleep(wait_s)
+
+            logger.info(
+                f"Tentative inpainting {attempt_index}/{len(attempts)} — {label}"
+            )
+            logger.debug(f"Prompt inpainting : {attempt_prompt[:200]}...")
+
+            parts = [source_part, mask_part, ref_face_part]
+            if include_body_ref:
+                parts.append(ref_body_part)
+            parts.append(attempt_prompt)
+
+            response = _client.models.generate_content(
+                model=GEMINI_MODEL_INPAINTING,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],
+                ),
+            )
+
+            logger.info("Étape 3/3 : Sauvegarde et exposition nginx...")
+            filename = f"inpainted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            local_path = _save_image_from_response(response, filename)
+            public_url = _copy_to_nginx(local_path, filename)
+            logger.info(f"Inpainting terminé : {local_path}")
+            return local_path, public_url, filename
+
+        except ImageSafetyError as e:
+            last_error = e
+            logger.warning(f"Tentative inpainting {attempt_index}/{len(attempts)} refusée : {e}")
+            continue
+        except Exception as e:
+            last_error = e
+            if _is_transient_gemini_error(e) and attempt_index < len(attempts):
+                logger.warning(
+                    f"Tentative inpainting {attempt_index}/{len(attempts)} — erreur transitoire Gemini : {e}"
+                )
+                continue
+            logger.warning(
+                f"Tentative inpainting {attempt_index}/{len(attempts)} échouée : {e}"
+            )
+
+    raise ValueError(
+        "Inpainting Gemini a échoué après plusieurs tentatives locales.\n"
+        "Fallbacks essayés : prompt complet, prompt sanitisé, puis prompt simplifié avec ref visage seule.\n"
+        f"Modèle utilisé : {GEMINI_MODEL_INPAINTING}\n"
+        f"Dernière erreur : {last_error}"
     )
-
-    # ── Étape 3 : Sauvegarde + nginx ─────────────────────────────
-    logger.info("Étape 3/3 : Sauvegarde et exposition nginx...")
-    filename   = f"inpainted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    local_path = _save_image_from_response(response, filename)
-    public_url = _copy_to_nginx(local_path, filename)
-
-    logger.info(f"Inpainting terminé : {local_path}")
-    return local_path, public_url, filename
