@@ -1,33 +1,32 @@
 {
-  "cycle": [
-    {
-      "step": 1,
-      "format": "4:5",
-      "type": "feed",
-      "hashtags": true,
-      "note": "Post principal feed — workflow_pinterest image"
-    },
-    {
-      "step": 2,
+  "content_types": {
+    "story": {
+      "interval_days": 2,
+      "batch_size": 3,
+      "workflow": "video_pinterest",
+      "pool_type": "story",
+      "pool_mix": ["story", "story", "reel"],
       "format": "9:16",
-      "type": "story",
       "hashtags": false,
-      "note": "Story immersive — workflow_video_pinterest (pool story)"
+      "note": "3 stories tous les 2 jours — pool_mix: 2 faceless + 1 character (fallback si planner indispo)"
     },
-    {
-      "step": 3,
+    "reel": {
+      "interval_days": 4,
+      "batch_size": 1,
+      "workflow": "auto_video",
+      "pool_type": "reel",
       "format": "4:5",
-      "type": "reel",
       "hashtags": true,
-      "note": "Reel feed — workflow_video_pinterest (pool reel)"
+      "note": "1 reel tous les 4 jours — 50/50 video_local ou video_pinterest"
     },
-    {
-      "step": 4,
-      "format": "9:16",
-      "type": "story",
-      "hashtags": false,
-      "note": "Story immersive — workflow_video_pinterest (pool story)"
+    "feed": {
+      "interval_days": 3,
+      "batch_size": 1,
+      "workflow": "pinterest",
+      "format": "4:5",
+      "hashtags": true,
+      "note": "1 post feed image tous les 3 jours — workflow_pinterest"
     }
-  ],
-  "note": "Carrousel 1:1 en attente. TikTok prévu V3."
+  },
+  "note": "Scheduler multi-fréquence. Chaque type a son rythme indépendant. Carrousel 1:1 en attente. TikTok prévu V3."
 }

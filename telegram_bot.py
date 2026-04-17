@@ -399,32 +399,30 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update):
         return
 
-    from concept_generator import get_schedule_preview, load_history
-    from config import MIN_DAYS_BETWEEN_RUNS, POSTING_INTERVAL_DAYS
-    from datetime import datetime, timedelta
+    from concept_generator import get_due_content_types, get_schedule_preview, load_history
+    from datetime import datetime
 
     queue = _list_queue()
     history = load_history()
 
-    # Prochain post auto
-    last_run = None
-    if history:
-        last_entry = history[-1]
-        try:
-            last_run = datetime.fromisoformat(last_entry.get("generated_at", ""))
-        except Exception:
-            pass
-
-    if last_run:
-        next_run = last_run + timedelta(days=MIN_DAYS_BETWEEN_RUNS)
-        delta    = next_run - datetime.now()
-        if delta.total_seconds() > 0:
-            days_left = delta.days
-            next_str  = f"dans {days_left} jour(s) — {next_run.strftime('%d/%m/%Y %H:%M')}"
-        else:
-            next_str = "🔴 En retard — lancer manuellement /run"
+    # Scheduler multi-fréquence : quels types sont dus ?
+    due_types = get_due_content_types()
+    if due_types:
+        due_str = "🔴 *Contenus en retard :*\n"
+        for dt in due_types:
+            due_str += f"  • {_escape_md(dt['_content_type'])} — déficit {dt['_deficit']}\n"
     else:
-        next_str = "Aucun post enregistré — premier run à venir"
+        due_str = "✅ Tous les types de contenu sont à jour"
+
+    # Aperçu scheduler
+    preview = get_schedule_preview()
+    sched_lines = ["📅 *Scheduler multi\\-fréquence :*\n"]
+    for item in preview:
+        sched_lines.append(
+            f"  {_escape_md(item['status'])} *{_escape_md(item['type'])}* "
+            f"— {_escape_md(item['batch'])} sur {_escape_md(item['interval'])} "
+            f"\\| dernier : {_escape_md(item['last'])}\n"
+        )
 
     # Posts en attente (queue)
     if queue:
@@ -444,8 +442,8 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
         f"📊 *Status {_escape_md(INFLUENCER_NAME)}*\n\n"
         f"{pending_str}\n"
-        f"📅 Prochain post auto : {_escape_md(next_str)}\n"
-        f"⏱ Cadence auto : {_escape_md(str(POSTING_INTERVAL_DAYS))}j \| garde\-fou : {_escape_md(str(MIN_DAYS_BETWEEN_RUNS))}j\n"
+        f"{due_str}\n\n"
+        f"{''.join(sched_lines)}\n"
         f"📈 Total posts historique : {len(history)}"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
@@ -618,21 +616,21 @@ async def cmd_retry_kling(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Afficher le calendrier des 4 prochains posts — /schedule"""
+    """Afficher le calendrier multi-fréquence — /schedule"""
     if not _is_authorized(update):
         return
 
     try:
         from concept_generator import get_schedule_preview
-        preview = get_schedule_preview(n=4)
+        preview = get_schedule_preview()
 
-        lines = [f"📅 *Calendrier éditorial — 4 prochains posts*\n"]
+        lines = [f"📅 *Calendrier multi\\-fréquence*\n"]
         for item in preview:
-            hashtag_icon = "🏷️" if item["hashtags"] else "🚫"
             lines.append(
-                f"*Step {_escape_md(item['step'])}* — {_escape_md(item['eta'])}\n"
-                f"  Format : `{_escape_md(item['format'])}` \\| Type : {_escape_md(item['type'])} \\| Hashtags : {hashtag_icon}\n"
-                f"  _{_escape_md(item['note'])}_\n"
+                f"{_escape_md(item['status'])} *{_escape_md(item['type'])}*\n"
+                f"  Fréquence : {_escape_md(item['batch'])} tous les {_escape_md(item['interval'])}\n"
+                f"  Workflow : `{_escape_md(item['workflow'])}` \\| Format : `{_escape_md(item['format'])}`\n"
+                f"  Dernier : {_escape_md(item['last'])}\n"
             )
         await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN_V2)
 

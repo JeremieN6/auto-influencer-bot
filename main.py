@@ -59,30 +59,54 @@ def _has_local_videos() -> bool:
 
 def _select_workflow(step: dict) -> str:
     """
-    Sélectionne le workflow selon la disponibilité de vidéos locales et le calendrier.
+    Sélectionne le workflow en fonction du type de contenu demandé par le calendrier
+    ou par le content planner.
 
-    Priorité :
-    1. Vidéos locales disponibles → "video_local" (toujours)
-       → Si /data/videos/ vide, tente un auto-refill depuis /temp/videos/ avant décision
-    2. Step feed   → "pinterest" (image)
-    3. Step story  → "video_pinterest" (pool story)
-    4. Step reel   → "video_pinterest" (pool reel)
+    Mapping :
+    - feed            → "pinterest" (image)
+    - story           → "video_pinterest" (pool story — fallback générique)
+    - story_faceless  → "video_pinterest" (pool story)
+    - story_character → "video_pinterest" (pool reel)
+    - reel            → 50/50 aléatoire "video_local" / "video_pinterest" (pool reel)
+              Si video_local sélectionné mais pas de vidéos locales → fallback video_pinterest
     """
-    # Tentative de refill automatique si /data/videos/ vide
-    if not _has_local_videos():
-        from video_batch_manager import auto_refill_if_empty
-        refilled = auto_refill_if_empty()
-        if refilled:
-            log("info", "main", "Auto-refill : nouvelle vague de vidéos transférée dans /data/videos/")
-    
-    # Décision du workflow
-    if _has_local_videos():
-        return "video_local"
+    import random as _rng
+
     step_type = step.get("type", "feed")
+    workflow_hint = step.get("workflow", "")
+
     if step_type == "feed":
         return "pinterest"
-    if step_type in ("story", "reel"):
+
+    if step_type in ("story", "story_faceless", "story_character"):
         return "video_pinterest"
+
+    if step_type == "reel":
+        # "auto_video" dans le calendrier = 50/50 entre video_local et video_pinterest
+        if workflow_hint == "auto_video":
+            choice = _rng.choice(["video_local", "video_pinterest"])
+            if choice == "video_local":
+                # Vérifier qu'on a des vidéos locales, sinon fallback
+                if not _has_local_videos():
+                    from video_batch_manager import auto_refill_if_empty
+                    refilled = auto_refill_if_empty()
+                    if refilled:
+                        log("info", "main", "Auto-refill : nouvelle vague de vidéos transférée")
+                if _has_local_videos():
+                    log("info", "main", "Reel : video_local sélectionné (50/50)")
+                    return "video_local"
+                else:
+                    log("info", "main", "Reel : video_local sélectionné mais pas de vidéos → fallback video_pinterest")
+                    return "video_pinterest"
+            else:
+                log("info", "main", "Reel : video_pinterest sélectionné (50/50)")
+                return "video_pinterest"
+        elif workflow_hint == "video_local":
+            return "video_local"
+        elif workflow_hint == "video_pinterest":
+            return "video_pinterest"
+        return "video_pinterest"  # fallback reel
+
     return "pinterest"  # fallback sécurité
 
 
@@ -125,6 +149,7 @@ def run_pipeline(
     relevant: str | None = None,
     persist: bool = True,
     pool: str | None = None,
+    content_type: str | None = None,
 ) -> dict:
     """
     Exécute le pipeline complet de génération de contenu.
@@ -137,6 +162,7 @@ def run_pipeline(
         relevant        : si fourni, active le mode relevant keywords.
                           Valeur = catégorie ("lifestyle", "beach", "outfit")
                           ou "all" pour toutes les catégories.
+        content_type    : type de contenu (story/reel/feed) — pour le scheduler multi-fréquence.
 
     Returns:
         dict avec les clés : image_path, public_url, filename, caption, concept, step
@@ -161,6 +187,8 @@ def run_pipeline(
     concept = generate_concept(
         override_params=override_params,
         persist=persist and not dry_run,
+        content_type=content_type,
+        pool_type=pool,
     )
     log("info", "main", (
         f"Concept : {concept['mood']} | {concept['outfit']} | "
@@ -824,12 +852,6 @@ Exemples :
     return parser.parse_args()
 
 
-# Délai minimal entre deux runs cron consécutifs (en jours).
-# Défini dans config.py pour rester cohérent avec la cadence affichée par /status.
-# Les appels manuels avec --force ignorent ce garde-fou.
-from config import MIN_DAYS_BETWEEN_RUNS
-
-
 if __name__ == "__main__":
     setup_logger()
     args = _parse_args()
@@ -900,39 +922,28 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
-        # ── Guard anti-double-run (protection cron timing) ──────────
-        # Ignore si : dry_run, --force, --resume-kling, ou premier run (historique vide)
-        if not args.dry_run and not args.force and not args.resume_kling:
-            import json as _json_guard
-            from datetime import datetime as _dt_guard
-            from pathlib import Path as _guard_path
-            _history_file = _guard_path(__file__).parent / "data" / "history.json"
-            try:
-                with open(_history_file, encoding="utf-8") as _hf:
-                    _hist_guard = _json_guard.load(_hf)
-                if _hist_guard:
-                    _last_run = _dt_guard.fromisoformat(_hist_guard[-1].get("generated_at", ""))
-                    _elapsed_days = (_dt_guard.now() - _last_run).total_seconds() / 86400
-                    if _elapsed_days < MIN_DAYS_BETWEEN_RUNS:
-                        _skip_message = (
-                            f"Guard anti-double-run : dernier run il y a {_elapsed_days:.1f}j "
-                            f"(< {MIN_DAYS_BETWEEN_RUNS}j minimum) — pipeline ignoré.\n"
-                            f"Utiliser --force pour forcer malgré tout."
-                        )
-                        log("info", "main", _skip_message)
-                        try:
-                            asyncio.run(_send_telegram_info(
-                                "Pipeline auto ignoré : garde-fou anti-double-run actif.\n"
-                                f"Dernier run il y a {_elapsed_days:.1f} jour(s).\n"
-                                f"Seuil actuel : {MIN_DAYS_BETWEEN_RUNS} jour(s)."
-                            ))
-                        except Exception as _skip_notify_err:
-                            log("warning", "main", f"Notification Telegram skip échouée : {_skip_notify_err}")
-                        sys.exit(0)
-            except FileNotFoundError:
-                pass  # Pas d'historique → premier run, on proceed
-            except Exception as _guard_err:
-                log("warning", "main", f"Guard anti-double-run : erreur lecture history ({_guard_err}) — proceed anyway")
+        # ── Guard anti-double-run (scheduler multi-fréquence) ──────
+        # En mode auto : le scheduler détermine quels types sont dus.
+        # Si rien n'est dû et pas de --force → skip.
+        # En mode workflow explicite : pas de guard (l'utilisateur sait ce qu'il fait).
+        # En --dry-run : pas de guard non plus.
+        _due_types = []
+        if not args.dry_run and not args.force and not args.resume_kling and args.workflow == "auto":
+            from concept_generator import get_due_content_types
+            _due_types = get_due_content_types()
+            if not _due_types:
+                _skip_message = (
+                    "Scheduler : aucun type de contenu n'est dû actuellement — pipeline ignoré.\n"
+                    "Utiliser --force pour forcer malgré tout."
+                )
+                log("info", "main", _skip_message)
+                try:
+                    asyncio.run(_send_telegram_info(
+                        "Pipeline auto ignoré : scheduler — tous les types de contenu sont à jour."
+                    ))
+                except Exception as _skip_notify_err:
+                    log("warning", "main", f"Notification Telegram skip échouée : {_skip_notify_err}")
+                sys.exit(0)
 
         # ── Mode reprise Kling (--resume-kling) ─────────────────────
         if args.resume_kling:
@@ -964,14 +975,120 @@ if __name__ == "__main__":
                     pass
                 sys.exit(1)
 
-        # Résolution du workflow "auto"
+        # Résolution du workflow "auto" → scheduler multi-fréquence
         selected_workflow = args.workflow
         if selected_workflow == "auto":
-            from concept_generator import get_current_calendar_step
-            _step = get_current_calendar_step()
-            selected_workflow = _select_workflow(_step)
-            log("info", "main", f"Mode auto — workflow sélectionné : {selected_workflow} (step type={_step.get('type')})")
+            from concept_generator import get_due_content_types, get_current_calendar_step
 
+            # Si _due_types pas encore calculé (--force ou --dry-run), le calculer maintenant
+            if not _due_types:
+                _due_types = get_due_content_types()
+
+            if not _due_types:
+                # --force ou --dry-run sans contenu dû → exécuter le type le plus en retard (feed par défaut)
+                _step = get_current_calendar_step()
+                selected_workflow = _select_workflow(_step)
+                log("info", "main", f"Mode auto (force/dry-run) — workflow unique : {selected_workflow} (type={_step.get('type')})")
+                try:
+                    run_pipeline(
+                        workflow=selected_workflow,
+                        override_params=override_params,
+                        dry_run=args.dry_run,
+                        relevant=args.relevant,
+                        persist=not args.no_persist,
+                        pool=args.pool,
+                    )
+                except KeyboardInterrupt:
+                    log("info", "main", "Pipeline interrompu par l'utilisateur")
+                except Exception as e:
+                    log("error", "main", f"Erreur fatale pipeline : {e}")
+                    try:
+                        asyncio.run(_send_telegram_info(f"🔴 Erreur pipeline : {str(e)[:500]}"))
+                    except Exception:
+                        pass
+            else:
+                # Boucle scheduler avec content planner (conscience de l'influenceur)
+                from content_planner import get_content_plan
+                from concept_generator import load_calendar
+
+                _plan = get_content_plan(_due_types)
+                log("info", "main", f"Content plan : {len(_plan)} contenu(s) à produire")
+
+                _total_produced = 0
+                for _idx, _item in enumerate(_plan):
+                    item_type = _item["type"]
+                    # Mapper le type planner vers le type scheduler (story_faceless/story_character → story)
+                    ct_name = "story" if item_type.startswith("story") else item_type
+
+                    # Déterminer le pool_type depuis le type planner
+                    if item_type == "story_faceless":
+                        _pool = "story"
+                    elif item_type == "story_character":
+                        _pool = "reel"
+                    elif item_type == "reel":
+                        _pool = "reel"
+                    else:
+                        _pool = None
+
+                    # Construire le step pour _select_workflow
+                    _calendar_config = load_calendar().get("content_types", {}).get(ct_name, {})
+                    _step = {
+                        "step": 1,
+                        "format": _calendar_config.get("format", "4:5"),
+                        "type": item_type,
+                        "hashtags": _calendar_config.get("hashtags", True),
+                        "note": _item.get("reason", ""),
+                        "workflow": _calendar_config.get("workflow", ""),
+                    }
+                    wf = _select_workflow(_step)
+                    _pool_override = args.pool or _pool
+
+                    # Injecter les choix du planner dans les override_params
+                    _planner_overrides = {}
+                    if _item.get("mood"):
+                        _planner_overrides["mood"] = _item["mood"]
+                    if _item.get("lighting"):
+                        _planner_overrides["lighting"] = _item["lighting"]
+                    if _item.get("location"):
+                        _planner_overrides["location"] = _item["location"]
+                    if _item.get("outfit"):
+                        _planner_overrides["outfit"] = _item["outfit"]
+                    # Fusionner avec les override_params existants (CLI)
+                    _merged_overrides = {**(override_params or {}), **_planner_overrides} if _planner_overrides else override_params
+
+                    log("info", "main",
+                        f"Planner [{_idx+1}/{len(_plan)}] : {item_type} → wf={wf} pool={_pool_override} "
+                        f"| {_item.get('reason', '')[:80]}")
+
+                    try:
+                        run_pipeline(
+                            workflow=wf,
+                            override_params=_merged_overrides,
+                            dry_run=args.dry_run,
+                            relevant=_item.get("tag_category") or args.relevant,
+                            persist=not args.no_persist,
+                            pool=_pool_override,
+                            content_type=ct_name,
+                        )
+                        _total_produced += 1
+                    except KeyboardInterrupt:
+                        log("info", "main", "Pipeline interrompu par l'utilisateur")
+                        sys.exit(0)
+                    except Exception as e:
+                        log("error", "main",
+                            f"Erreur pipeline {item_type} [{_idx+1}/{len(_plan)}] : {e}")
+                        try:
+                            asyncio.run(_send_telegram_info(
+                                f"🔴 Erreur pipeline {item_type} [{_idx+1}/{len(_plan)}] : {str(e)[:400]}"
+                            ))
+                        except Exception:
+                            pass
+                        # Continuer avec les autres items du plan
+
+                log("info", "main", f"Scheduler terminé — {_total_produced} contenu(s) produit(s)")
+            sys.exit(0)
+
+        # Workflow explicite (pas "auto") — comportement direct
         try:
             run_pipeline(
                 workflow=selected_workflow,

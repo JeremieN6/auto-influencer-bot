@@ -65,6 +65,8 @@ def load_calendar(path: str = CALENDAR_PATH) -> dict:
 def generate_concept(
     override_params: dict | None = None,
     persist: bool = True,
+    content_type: str | None = None,
+    pool_type: str | None = None,
 ) -> dict:
     """
     Tire un concept créatif aléatoire depuis variables.json.
@@ -73,9 +75,13 @@ def generate_concept(
       Les champs fournis remplacent le tirage aléatoire correspondant.
     - persist : si True, ajoute le concept à history.json.
       Mettre à False pour les runs manuels via /run (non-cycle).
+    - content_type : type de contenu (story/reel/feed) — enregistré dans history.json
+      pour le scheduler multi-fréquence.
+    - pool_type : type de pool Pinterest (story/reel) — enregistré dans history.json
+      pour le tracking faceless/character par le content planner.
 
     Retourne un dict avec les clés :
-        location, outfit, pose, mood, lighting, generated_at
+        location, outfit, pose, mood, lighting, generated_at[, content_type, pool_type]
     """
     variables = load_variables()
     history   = load_history()
@@ -111,6 +117,12 @@ def generate_concept(
     else:
         logger.warning("Toutes les combinaisons ont été vues — utilisation du dernier concept tiré")
 
+    # Enregistrer le type de contenu et le pool pour le scheduler multi-fréquence
+    if content_type:
+        concept["content_type"] = content_type
+    if pool_type:
+        concept["pool_type"] = pool_type
+
     if persist:
         history.append(concept)
         save_history(history)
@@ -132,42 +144,160 @@ def get_current_calendar_step(
     calendar_path: str = CALENDAR_PATH,
 ) -> dict:
     """
-    Retourne l'étape calendrier courante en fonction de la position dans l'historique.
-    Le cycle tourne en boucle : step 1, 2, 3, 4, 1, 2, 3, 4, ...
+    Retourne un step calendrier synthétique basé sur le prochain type de contenu dû.
 
-    Retourne un dict avec les clés : step, format, type, hashtags, note
+    Rétro-compatible : retourne un dict avec les clés step, format, type, hashtags, note.
+    Utilise le nouveau format multi-fréquence de calendar.json.
+    """
+    due = get_due_content_types(history_path=history_path, calendar_path=calendar_path)
+    if due:
+        ct = due[0]
+    else:
+        # Rien n'est dû — retourner le type avec la plus grande dette relative
+        calendar = load_calendar(calendar_path)
+        ct_name = next(iter(calendar.get("content_types", {})), "feed")
+        ct = calendar["content_types"][ct_name]
+        ct = {**ct, "_content_type": ct_name, "_deficit": 0}
+
+    content_type = ct["_content_type"]
+    step = {
+        "step": 1,
+        "format": ct.get("format", "4:5"),
+        "type": content_type,
+        "hashtags": ct.get("hashtags", True),
+        "note": ct.get("note", ""),
+    }
+    logger.info(
+        f"Étape calendrier : type={step['type']} | format={step['format']} "
+        f"| hashtags={step['hashtags']} | deficit={ct.get('_deficit', '?')}"
+    )
+    return step
+
+
+def get_due_content_types(
+    history_path: str = HISTORY_PATH,
+    calendar_path: str = CALENDAR_PATH,
+) -> list[dict]:
+    """
+    Analyse le calendrier multi-fréquence et l'historique pour déterminer
+    quels types de contenu doivent être produits maintenant.
+
+    Pour chaque content_type dans calendar.json :
+      - Compte combien ont été produits dans les derniers `interval_days` jours
+      - Si count < batch_size → le type est "dû" avec un déficit
+
+    Retourne une liste de dicts triée par priorité (plus gros déficit relatif d'abord).
+    Chaque dict contient les clés du content_type + _content_type (nom) + _deficit (int).
+    Liste vide si tout est à jour.
     """
     calendar = load_calendar(calendar_path)
     history  = load_history(history_path)
-    cycle    = calendar["cycle"]
-    step     = cycle[len(history) % len(cycle)]
-    logger.info(f"Étape calendrier : step={step['step']} | format={step['format']} | type={step['type']} | hashtags={step['hashtags']}")
-    return step
+    now      = datetime.now()
+
+    content_types = calendar.get("content_types", {})
+    if not content_types:
+        logger.warning("calendar.json ne contient pas de content_types — aucun contenu dû")
+        return []
+
+    due_list = []
+
+    for ct_name, ct_config in content_types.items():
+        interval_days = ct_config.get("interval_days", 1)
+        batch_size    = ct_config.get("batch_size", 1)
+
+        # Compter les entrées de ce type dans la fenêtre
+        count_in_window = 0
+        for entry in reversed(history):
+            entry_type = entry.get("content_type") or entry.get("step", {}).get("type", "")
+            generated_at = entry.get("generated_at", "")
+            if not generated_at:
+                continue
+            try:
+                entry_time = datetime.fromisoformat(generated_at)
+            except (ValueError, TypeError):
+                continue
+            elapsed = (now - entry_time).total_seconds() / 86400
+            if elapsed > interval_days:
+                break  # Historique trié chronologiquement — on peut arrêter
+            if entry_type == ct_name:
+                count_in_window += 1
+
+        deficit = batch_size - count_in_window
+        if deficit > 0:
+            due_list.append({
+                **ct_config,
+                "_content_type": ct_name,
+                "_deficit": deficit,
+                "_count_in_window": count_in_window,
+            })
+            logger.info(
+                f"Scheduler : {ct_name} — {count_in_window}/{batch_size} produits "
+                f"sur {interval_days}j → déficit={deficit}"
+            )
+        else:
+            logger.debug(
+                f"Scheduler : {ct_name} — {count_in_window}/{batch_size} produits "
+                f"sur {interval_days}j → OK"
+            )
+
+    # Trier par déficit relatif décroissant (% du batch restant)
+    due_list.sort(key=lambda x: x["_deficit"] / x.get("batch_size", 1), reverse=True)
+    return due_list
 
 
 def get_schedule_preview(
     history_path: str = HISTORY_PATH,
     calendar_path: str = CALENDAR_PATH,
-    n: int = 4,
+    n: int = 6,
 ) -> list[dict]:
     """
-    Retourne les N prochaines étapes du calendrier éditorial (pour /schedule).
+    Retourne un aperçu du statut de chaque type de contenu (pour /schedule).
+    Format multi-fréquence : montre le déficit et la prochaine échéance.
     """
-    from datetime import timedelta
-
     calendar = load_calendar(calendar_path)
     history  = load_history(history_path)
-    cycle    = calendar["cycle"]
-    base_idx = len(history)
     now      = datetime.now()
 
-    from config import POSTING_INTERVAL_DAYS
-
+    content_types = calendar.get("content_types", {})
     preview = []
-    for i in range(n):
-        step = cycle[(base_idx + i) % len(cycle)]
-        eta  = now + timedelta(days=i * POSTING_INTERVAL_DAYS)
-        preview.append({**step, "eta": eta.strftime("%d/%m/%Y %H:%M")})
+
+    for ct_name, ct_config in content_types.items():
+        interval_days = ct_config.get("interval_days", 1)
+        batch_size    = ct_config.get("batch_size", 1)
+
+        # Trouver le dernier contenu de ce type
+        last_date = None
+        count_in_window = 0
+        for entry in reversed(history):
+            entry_type = entry.get("content_type") or entry.get("step", {}).get("type", "")
+            generated_at = entry.get("generated_at", "")
+            if not generated_at:
+                continue
+            try:
+                entry_time = datetime.fromisoformat(generated_at)
+            except (ValueError, TypeError):
+                continue
+            elapsed = (now - entry_time).total_seconds() / 86400
+            if elapsed > interval_days:
+                break
+            if entry_type == ct_name:
+                count_in_window += 1
+                if last_date is None:
+                    last_date = entry_time
+
+        deficit = max(0, batch_size - count_in_window)
+        status = "✅" if deficit == 0 else f"⚠️ -{deficit}"
+
+        preview.append({
+            "type": ct_name,
+            "format": ct_config.get("format", "?"),
+            "interval": f"{interval_days}j",
+            "batch": f"{count_in_window}/{batch_size}",
+            "status": status,
+            "workflow": ct_config.get("workflow", "?"),
+            "last": last_date.strftime("%d/%m %H:%M") if last_date else "jamais",
+        })
+
     return preview
 
 

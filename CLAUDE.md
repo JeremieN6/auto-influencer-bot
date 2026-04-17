@@ -22,9 +22,9 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
 ---
 
 ## Etat Actuel du Projet
-**Phase** : V1 Implémentée
-**Derniere session** : 2026-03-04
-**Progression globale** : 70% (V1 complète, V2 scaffoldée)
+**Phase** : V1+ Content Planner (conscience éditoriale)
+**Derniere session** : 2026-04-16
+**Progression globale** : 80% (V1 complète + scheduler multi-fréquence + content planner, V2 scaffoldée)
 
 ### Ce qui est fait :
 - [x] Configuration MCP memoire
@@ -72,6 +72,13 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
 | 2026-03-04 | Les commandes Telegram manuelles déclenchent `main.py` via subprocess | Séparation propre entre le processus bot (polling) et le pipeline (cron) |
 | 2026-03-04 | `--dry-run` flag dans main.py | Facilite les tests sans affecter l'historique ni envoyer sur Telegram |
 | 2026-04-08 | Système de queue pour posts multiples au lieu de `pending_state` unique | Permet de recevoir un nouveau post chaque jour sans bloquer si le précédent n'est pas validé — validation indépendante de chaque post via boutons inline |
+| 2026-04-16 | Scheduler multi-fréquence au lieu de cycle séquentiel 4 steps | Permet des fréquences indépendantes par type (story 3/2j, reel 1/4j, feed 1/3j) — compte plus vivant |
+| 2026-04-16 | Suppression priorité absolue `video_local` dans `_select_workflow()` | Le calendrier dicte maintenant le workflow — `video_local` n'écrase plus les autres types |
+| 2026-04-16 | Reels : 50/50 aléatoire `video_local`/`video_pinterest` | Plus de variété, `video_local` fallback `video_pinterest` si pool vide |
+| 2026-04-16 | `content_type` enregistré dans chaque entrée `history.json` | Permet au scheduler de compter les contenus par type dans la fenêtre temporelle |
+| 2026-04-16 | Content planner (Claude) + fallback `pool_mix` | L'influenceuse "réfléchit" à ses posts via Claude — si l'API échoue, `pool_mix` du calendrier prend le relais |
+| 2026-04-16 | Profil enrichi avec `tone` et `audience` (démographiques réels) | Le planner utilise les vraies données d'audience Instagram pour décider du contenu |
+| 2026-04-16 | `pool_type` enregistré dans history.json | Permet au planner de distinguer stories faceless vs character dans ses stats |
 
 ---
 
@@ -98,3 +105,28 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
   - `/status` affiche tous les posts en attente (3 premiers + compteur)
   - Retrait de tous les blocages `_has_pending_content()` dans `/run`, alias `/generate`, et `/manualGeneration`
 - Message garde-fou "0.0 jour(s)" : comportement **normal** — cron déclenché après un run récent, correctement bloqué par `MIN_DAYS_BETWEEN_RUNS`
+
+### Session 2026-04-16 — Scheduler multi-fréquence
+- Remplacé le cycle séquentiel 4 steps par un scheduler multi-fréquence basé sur des intervalles par type
+- Nouveau format `calendar.json` : `content_types` avec `interval_days`, `batch_size`, `workflow` par type
+- `concept_generator.py` : ajout de `get_due_content_types()` — analyse history.json par type et fenêtre temporelle
+- `main.py` : boucle scheduler dans `__main__` — itère sur chaque type dû et produit `batch_size - count` contenus
+- `_select_workflow()` réécrit : le calendrier dicte le workflow, plus de priorité absolue `video_local`
+- Reels : 50/50 aléatoire entre `video_local` et `video_pinterest`, fallback si pool local vide
+- Stories : `video_pinterest` pool story (avec ou sans personnage possible)
+- `generate_concept()` accepte `content_type` — enregistré dans `history.json` pour le scheduler
+- `/status` et `/schedule` Telegram mis à jour pour afficher le statut multi-fréquence
+- Ancien guard `MIN_DAYS_BETWEEN_RUNS` remplacé par le scheduler (chaque type a son propre intervalle)
+- Prochaine étape : configurer cron toutes les 12h (au lieu de 1x/jour) pour capter les types dus
+
+### Session 2026-04-16b — Content Planner (conscience éditoriale)
+- Nouveau module `content_planner.py` : Claude planifie les publications comme le ferait l'influenceuse
+- Prompt `PROMPT_CONTENT_PLANNER` dans `prompts.py` : contexte complet (profil, historique, stats, audience, variables créatives)
+- 4 types de contenu planner : `story_faceless`, `story_character`, `reel`, `feed`
+- Fallback `pool_mix` dans `calendar.json` : si Claude échoue, répartition prédéfinie (ex: 2 faceless + 1 character pour stories)
+- `_select_workflow()` étendu pour gérer `story_faceless` et `story_character`
+- Scheduler main.py réécrit : appelle `get_content_plan()` → itère sur le plan plutôt que sur les types bruts
+- Les choix du planner (mood, location, outfit, lighting) sont injectés comme `override_params` dans `run_pipeline()`
+- `pool_type` trackée dans history.json via `generate_concept(pool_type=...)` pour distinguer faceless/character
+- `madison.json` enrichi : `tone` et `audience` avec vrais démographiques Instagram (men 25-64, core 35-54)
+- Prochaine étape : tester le pipeline complet avec le planner sur VPS
