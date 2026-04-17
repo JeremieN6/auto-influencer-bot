@@ -77,6 +77,13 @@ def _escape_md(text: str) -> str:
     return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\])', r'\\\1', str(text))
 
 
+# Maximum characters to show in prompt preview sent to Telegram (safety)
+# Telegram itself limite les messages à 4096 chars; on prend une marge.
+_MAX_PROMPT_PREVIEW_CHARS = 2048
+# Message court affiché sous l'aperçu si le prompt est tronqué
+_PROMPT_TRUNCATION_NOTE = "Même si le prompt est tronqué ici, il sera bien envoyé en entier au pipeline. Il s'agit juste d'un aperçu car telegram limite la taille des messages."
+
+
 # ================================================================
 # Système de queue pour posts multiples
 # ================================================================
@@ -1034,12 +1041,18 @@ async def run_manual_gen_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     prompt = update.message.text.strip()
     ctx.user_data.setdefault("run_override", {})["prompt"] = prompt
     ctx.user_data["run_workflow"] = "manual_gen"
-    await update.message.reply_text(
-        f"✅ *Lancement génération*\n\n"
-        f"🎨 Prompt : _{_escape_md(prompt[:150])}_\n\n"
-        "🚀 Pipeline lancé\\. Résultat dans 1\\-2 minutes\\.",
-        parse_mode=ParseMode.MARKDOWN_V2,
-    )
+    # Prévisualisation sécurisée du prompt (limite afin d'éviter un message Telegram trop long)
+    preview = prompt if len(prompt) <= _MAX_PROMPT_PREVIEW_CHARS else prompt[:_MAX_PROMPT_PREVIEW_CHARS]
+    preview_escaped = _escape_md(preview)
+    truncated = len(prompt) > _MAX_PROMPT_PREVIEW_CHARS
+    message = "✅ *Lancement génération*\\n\\n"
+    message += f"🎨 Prompt : _{preview_escaped}_"
+    if truncated:
+        message += f"\\n({_escape_md(_PROMPT_TRUNCATION_NOTE)})\\n\\n"
+    else:
+        message += "\\n\\n"
+    message += "🚀 Pipeline lancé\\. Résultat dans 1\\-2 minutes\\."
+    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
     await _launch_run_pipeline(ctx)
     return ConversationHandler.END
 
@@ -1080,11 +1093,15 @@ async def run_inpaint_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     is_skip = (text.lower() in ("/skip", "skip"))
     ctx.user_data.setdefault("run_override", {})["prompt"] = "" if is_skip else text
     ctx.user_data["run_workflow"] = "manual_inpaint"
-    prompt_line = (
-        "🎨 Prompt : _par défaut_"
-        if is_skip
-        else f"🎨 Prompt : _{_escape_md(text[:150])}_"
-    )
+    if is_skip:
+        prompt_line = "🎨 Prompt : _par défaut_"
+    else:
+        preview = text if len(text) <= _MAX_PROMPT_PREVIEW_CHARS else text[:_MAX_PROMPT_PREVIEW_CHARS]
+        preview_escaped = _escape_md(preview)
+        truncated = len(text) > _MAX_PROMPT_PREVIEW_CHARS
+        prompt_line = f"🎨 Prompt : _{preview_escaped}_"
+        if truncated:
+            prompt_line += f"\n({_escape_md(_PROMPT_TRUNCATION_NOTE)})"
     await update.message.reply_text(
         f"✅ *Lancement inpainting*\n\n"
         f"{prompt_line}\n\n"
@@ -1137,11 +1154,18 @@ async def run_i2v_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         InlineKeyboardButton("16:9 🖥️",          callback_data="16:9"),
         InlineKeyboardButton("1:1 ⬛",            callback_data="1:1"),
     ]])
-    await update.message.reply_text(
-        f"✅ Prompt enregistré :\n\n_{_escape_md(prompt[:150])}_\n\nChoisis l'aspect ratio :",
-        reply_markup=ratio_keyboard,
-        parse_mode=ParseMode.MARKDOWN_V2,
-    )
+    # Prévisualisation sécurisée du prompt (limite afin d'éviter un message Telegram trop long)
+    preview = prompt if len(prompt) <= _MAX_PROMPT_PREVIEW_CHARS else prompt[:_MAX_PROMPT_PREVIEW_CHARS]
+    preview_escaped = _escape_md(preview)
+    truncated = len(prompt) > _MAX_PROMPT_PREVIEW_CHARS
+    message = "✅ Prompt enregistré :\\n\\n"
+    message += f"_{preview_escaped}_"
+    if truncated:
+        message += f"\\n({_escape_md(_PROMPT_TRUNCATION_NOTE)})\\n\\n"
+    else:
+        message += "\\n\\n"
+    message += "Choisis l'aspect ratio :"
+    await update.message.reply_text(message, reply_markup=ratio_keyboard, parse_mode=ParseMode.MARKDOWN_V2)
     return RUN_RATIO
 
 
