@@ -107,10 +107,14 @@ def _build_scene_description(scene_json: dict) -> str:
     Returns:
         Description textuelle de la scène (location, tenue, mood, lighting...)
     """
+    def _as_dict(val) -> dict:
+        """Retourne val si c'est un dict, {} sinon (robustesse si Gemini retourne une string)."""
+        return val if isinstance(val, dict) else {}
+
     parts = []
     
     # Context global
-    global_ctx = scene_json.get("global_context", {})
+    global_ctx = _as_dict(scene_json.get("global_context"))
     if scene_desc := global_ctx.get("scene_description"):
         parts.append(f"Scene: {scene_desc}")
     if time_of_day := global_ctx.get("time_of_day"):
@@ -119,27 +123,27 @@ def _build_scene_description(scene_json: dict) -> str:
         parts.append(f"Atmosphere: {weather}")
     
     # Lighting
-    lighting = scene_json.get("global_context", {}).get("lighting", {})
+    lighting = _as_dict(global_ctx.get("lighting"))
     if light_quality := lighting.get("quality"):
         parts.append(f"Lighting: {light_quality}")
     
     # Pose & expression
-    subject = scene_json.get("subject", {})
-    pose = subject.get("pose", {})
+    subject = _as_dict(scene_json.get("subject"))
+    pose = _as_dict(subject.get("pose"))
     if body_pos := pose.get("body_position"):
         parts.append(f"Pose: {body_pos}")
     if expression := pose.get("expression_mood"):
         parts.append(f"Mood: {expression}")
     
     # Tenue
-    clothing = subject.get("clothing", {})
+    clothing = _as_dict(subject.get("clothing"))
     if outfit := clothing.get("outfit_description"):
         parts.append(f"Outfit: {outfit}")
     elif style := clothing.get("style"):
         parts.append(f"Style: {style}")
     
     # Location (environment)
-    environment = scene_json.get("environment", {})
+    environment = _as_dict(scene_json.get("environment"))
     if location := environment.get("location_type"):
         parts.append(f"Location: {location}")
     

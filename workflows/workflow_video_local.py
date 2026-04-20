@@ -476,11 +476,13 @@ def _run_person_branch(
     except ImageSafetyError:
         # Gemini refuse l'image Madison même après prompt sanitisé → publier la vidéo
         # source brute comme Story (flux ambiance) plutôt qu'abandonner le run.
+        # NOTE : la frame est déjà supprimée à ce stade — on passe scene_json pour éviter
+        # que _run_ambiance_branch tente de rouvrir un fichier inexistant.
         logger.warning(
             "IMAGE_SAFETY persistant sur génération image Madison — "
             "fallback flux ambiance (vidéo source brute, type=story)"
         )
-        return _run_ambiance_branch(video_path, frame_path, step, dry_run=dry_run)
+        return _run_ambiance_branch(video_path, frame_path, step, dry_run=dry_run, scene_json=scene_json)
     logger.info(f"Image Madison générée : {madison_image_path}")
     madison_image_path = _crop_to_portrait_9_16(madison_image_path)  # safety net si Gemini ignore le ratio
 
@@ -496,7 +498,7 @@ def _run_person_branch(
             body_status = "⚠ Retry — ✓ OK" if body_ok else "⚠ Retry — non validé"
         except ImageSafetyError:
             logger.warning("IMAGE_SAFETY sur retry — fallback flux ambiance")
-            return _run_ambiance_branch(video_path, frame_path, step, dry_run=dry_run)
+            return _run_ambiance_branch(video_path, frame_path, step, dry_run=dry_run, scene_json=scene_json)
     logger.info(f"Corps Madison : {body_status}")
 
     # Sauvegarder l'état intermédiaire avant Kling (recovery si erreur)
@@ -544,15 +546,21 @@ def _run_ambiance_branch(
     frame_path: str,
     step: dict,
     dry_run: bool = False,
+    scene_json: dict | None = None,
 ) -> tuple[str, str, str, str, str]:
     """Pipeline quand aucun personnage n'est détecté — vidéo utilisée telle quelle."""
     log_step(__name__, 4, TOTAL_STEPS, "Flux ambiance : vidéo utilisée brute")
     log_step(__name__, 5, TOTAL_STEPS, "Génération caption ambiance")
 
-    scene_json = image_to_json(frame_path)
-    logger.info(f"JSON de scène ambiance extrait — clés : {list(scene_json.keys())}")
+    if scene_json is None:
+        # Chemin normal : frame disponible (pas encore analysée)
+        scene_json = image_to_json(frame_path)
+        logger.info(f"JSON de scène ambiance extrait — clés : {list(scene_json.keys())}")
+    else:
+        # Chemin fallback depuis _run_person_branch : frame déjà supprimée, JSON pré-calculé
+        logger.info("Utilisation du JSON de scène pré-calculé (fallback depuis branche personnage)")
 
-    # Nettoyer la frame temporaire
+    # Nettoyer la frame temporaire si elle existe encore
     if os.path.exists(frame_path):
         os.remove(frame_path)
         logger.debug(f"Frame temporaire supprimée : {frame_path}")
