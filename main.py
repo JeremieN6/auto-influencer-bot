@@ -34,6 +34,8 @@ from concept_generator import (
     build_caption_prompt,
     generate_concept,
     get_current_calendar_step,
+    load_history,
+    save_history,
 )
 from logger import log, log_section, setup_logger
 from telegram_bot import save_pending_state, send_for_validation, send_video_for_validation
@@ -184,9 +186,12 @@ def run_pipeline(
 
     # ── Étape 1 : Concept créatif ────────────────────────────────
     log("info", "main", "=== Étape 1/4 : Génération concept ===")
+    # NOTE : persist=False ici — l'écriture dans history.json est différée
+    # à la fin du pipeline (après succès) pour éviter de "brûler" un slot
+    # si le pipeline crashe après generate_concept.
     concept = generate_concept(
         override_params=override_params,
-        persist=persist and not dry_run,
+        persist=False,
         content_type=content_type,
         pool_type=pool,
     )
@@ -443,6 +448,9 @@ def run_pipeline(
             )
             log("info", "main", f"[DRY RUN] Caption :\n{caption}")
         else:
+            if persist:
+                _hist = load_history(); _hist.append(concept); save_history(_hist)
+                log("info", "main", "Concept persisté → history.json (pipeline réussi)")
             save_pending_state(video_state)
             log("info", "main", "pending_state vidéo sauvegardé")
             asyncio.run(send_video_for_validation(video_path, caption, video_type))
@@ -521,6 +529,9 @@ def run_pipeline(
             )
             log("info", "main", f"[DRY RUN] Caption :\n{caption}")
         else:
+            if persist:
+                _hist = load_history(); _hist.append(concept); save_history(_hist)
+                log("info", "main", "Concept persisté → history.json (pipeline réussi)")
             save_pending_state(video_state)
             log("info", "main", "pending_state video_i2v sauvegardé")
             asyncio.run(send_video_for_validation(video_path, caption, video_type))
@@ -594,6 +605,9 @@ def run_pipeline(
             )
             log("info", "main", f"[DRY RUN] Caption :\n{caption}")
         else:
+            if persist:
+                _hist = load_history(); _hist.append(concept); save_history(_hist)
+                log("info", "main", "Concept persisté → history.json (pipeline réussi)")
             save_pending_state(video_state)
             log("info", "main", "pending_state video_mc sauvegardé")
             asyncio.run(send_video_for_validation(video_path, caption, video_type))
@@ -655,6 +669,9 @@ def run_pipeline(
         )
         log("info", "main", f"[DRY RUN] Caption :\n{caption}")
     else:
+        if persist:
+            _hist = load_history(); _hist.append(concept); save_history(_hist)
+            log("info", "main", "Concept persisté → history.json (pipeline réussi)")
         save_pending_state(state)
         log("info", "main", "pending_state sauvegardé")
 
