@@ -100,6 +100,31 @@ def _get_video_duration(video_path: str) -> float:
     return 10.0  # fallback
 
 
+def _get_video_resolution(video_path: str) -> tuple[int | None, int | None]:
+    """
+    Retourne la résolution (width, height) de la vidéo via ffmpeg parsing.
+    Si impossible, retourne (None, None).
+    """
+    ffmpeg_exe = _get_ffmpeg_exe()
+    cmd = [ffmpeg_exe, "-i", video_path]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        output = result.stderr + (result.stdout or "")
+
+        # Chercher d'abord un pattern dans la ligne "Video: ... 1920x1080"
+        m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", output)
+        if not m:
+            # fallback : chercher la première occurrence numérique WxH
+            m = re.search(r"(\d{2,5})x(\d{2,5})", output)
+        if m:
+            w, h = int(m.group(1)), int(m.group(2))
+            logger.debug(f"Résolution vidéo détectée : {w}x{h} ({video_path})")
+            return w, h
+    except Exception as e:
+        logger.warning(f"Impossible de lire la résolution vidéo : {e}")
+    return None, None
+
+
 
 def check_min_shot_duration(video_path: str, min_seconds: float = 3.0) -> bool:
     """

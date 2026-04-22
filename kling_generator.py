@@ -49,7 +49,7 @@ from config import (
     NGINX_OUTPUT_DIR,
     OUTPUTS_DIR,
 )
-from frame_extractor import _get_ffmpeg_exe, _get_video_duration
+from frame_extractor import _get_ffmpeg_exe, _get_video_duration, _get_video_resolution
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -72,6 +72,15 @@ _LAST_MOTION_CONTROL_METADATA = {
     "original_duration_s": None,
     "trimmed_duration_s": None,
 }
+
+# Metadata additionnelle : redimensionnement automatique appliqué avant Kling
+_LAST_MOTION_CONTROL_METADATA.update({
+    "rescale_applied": False,
+    "original_width": None,
+    "original_height": None,
+    "rescaled_width": None,
+    "rescaled_height": None,
+})
 
 # ================================================================
 # Conversion vidéo H.264
@@ -163,6 +172,66 @@ def _trim_video_for_motion_control(video_path: str, trim_duration_s: int = MOTIO
         return output_path
     except Exception as e:
         logger.warning(f"Trim vidéo Motion Control impossible : {e} — utilisation vidéo originale")
+        return video_path
+
+
+def _ensure_kling_resolution(video_path: str) -> str:
+    """
+    Vérifie la largeur vidéo et redimensionne si elle est hors bornes acceptées par Kling.
+
+    Règles Kling connues : width >= 340 et width <= 3850.
+    - Si width < 340 : upscale minimal à 340px de largeur.
+    - Si width > 3850 : downscale à 1920px (safe fallback).
+
+    Retourne le chemin vers la vidéo (nouveau fichier si redimensionné).
+    """
+    try:
+        orig_w, orig_h = _get_video_resolution(video_path)
+        if orig_w is None:
+            logger.warning("Impossible de détecter la résolution vidéo — skip rescale")
+            return video_path
+
+        if 340 <= orig_w <= 3850:
+            logger.debug(f"Résolution Kling OK : {orig_w}x{orig_h}")
+            return video_path
+
+        target_w = None
+        if orig_w < 340:
+            target_w = 340
+        elif orig_w > 3850:
+            target_w = 1920
+
+        if target_w is None:
+            return video_path
+
+        path = Path(video_path)
+        output_path = str(Path(OUTPUTS_DIR) / f"{path.stem}_resized_{target_w}w.mp4")
+        if os.path.exists(output_path):
+            logger.debug(f"Fichier redimensionné déjà présent : {output_path}")
+            return output_path
+
+        ffmpeg = _get_ffmpeg_exe()
+        cmd = [
+            ffmpeg,
+            "-i", str(path),
+            "-vf", f"scale={target_w}:-2",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-metadata:s:v:0", "rotate=0",
+            "-y", output_path,
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.warning(f"Redimensionnement Kling échoué (code {result.returncode}) — {result.stderr[-300:]}")
+            return video_path
+
+        logger.info(f"Vidéo redimensionnée pour Kling : {output_path} ({orig_w}x{orig_h} → {target_w}px width)")
+        return output_path
+
+    except Exception as e:
+        logger.warning(f"Erreur _ensure_kling_resolution : {e} — utilisation vidéo originale")
         return video_path
 
 
@@ -464,6 +533,27 @@ def generate_video_motion_control(
         raise
     except Exception:
         logger.warning("Impossible de lire la durée de la vidéo source — validation ignorée")
+
+    # ── Vérifier / redimensionner la résolution pour compatibilité Kling ──
+    try:
+        orig_w, orig_h = _get_video_resolution(source_video_path)
+        new_video_path = _ensure_kling_resolution(source_video_path)
+        new_w, new_h = _get_video_resolution(new_video_path)
+
+        if orig_w and new_w and (orig_w != new_w or orig_h != new_h):
+            _LAST_MOTION_CONTROL_METADATA.update({
+                "rescale_applied": True,
+                "original_width": orig_w,
+                "original_height": orig_h,
+                "rescaled_width": new_w,
+                "rescaled_height": new_h,
+            })
+        else:
+            _LAST_MOTION_CONTROL_METADATA["rescale_applied"] = False
+
+        source_video_path = new_video_path
+    except Exception as e:
+        logger.warning(f"Impossible de valider/redimensionner la résolution pour Kling : {e}")
 
     # ── Préparer les fichiers selon le mode de transport ─────────
     if _nginx_is_configured():
