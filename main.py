@@ -873,6 +873,24 @@ if __name__ == "__main__":
     setup_logger()
     args = _parse_args()
 
+    # ── Guard pause global — empêche les runs automatiques quand activé
+    try:
+        from pause_manager import is_paused, get_pause_info
+
+        if is_paused() and not args.force and not args.resume_kling:
+            info = get_pause_info()
+            reason = info.get("reason", "")
+            since = info.get("since", "")
+            log("info", "main", f"Pipeline global en pause depuis {since} — raison: {reason}")
+            try:
+                asyncio.run(_send_telegram_info(f"Pipeline global en pause — raison: {reason}"))
+            except Exception:
+                pass
+            sys.exit(0)
+    except Exception as _e:
+        # En cas d'erreur lors de la vérification, ne pas bloquer le pipeline
+        log("warning", "main", f"Impossible de vérifier l'état de pause : {_e}")
+
     # ── Guard anti-run-simultané (lock file) ────────────────────
     # Vérifie si un autre pipeline est déjà en cours d'exécution.
     # En cas de conflit, envoie une notification Telegram et exit.

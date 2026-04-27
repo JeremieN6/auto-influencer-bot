@@ -51,6 +51,7 @@ from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
 )
+from pause_manager import set_paused, is_paused, get_pause_info
 from logger import get_logger, setup_logger
 
 logger = get_logger(__name__)
@@ -463,14 +464,58 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         pending_str = "⚪ Aucun contenu en attente"
 
+    # État de pause global
+    pause_info = get_pause_info()
+    if pause_info.get("paused"):
+        pause_reason = pause_info.get("reason", "")
+        pause_since = _escape_md(pause_info.get("since", "")[:16].replace("T", " "))
+        pause_str = f"⏸️ *Pipeline en PAUSE* depuis {pause_since}"
+        if pause_reason:
+            pause_str += f" — _{_escape_md(pause_reason)}_"
+        pause_str += "\nUtilise /resume pour relancer\\.\n\n"
+    else:
+        pause_str = ""
+
     text = (
         f"📊 *Status {_escape_md(INFLUENCER_NAME)}*\n\n"
+        f"{pause_str}"
         f"{pending_str}\n"
         f"{due_str}\n\n"
         f"{''.join(sched_lines)}\n"
         f"📈 Total posts historique : {len(history)}"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+
+
+async def cmd_pause(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Met en pause le pipeline global — /pause [raison]"""
+    if not _is_authorized(update):
+        return
+    text = update.message.text or ""
+    reason = None
+    parts = text.split(maxsplit=1)
+    if len(parts) > 1:
+        reason = parts[1].strip()
+    try:
+        set_paused(True, reason=reason, by=str(update.effective_user.id) if update.effective_user else "telegram")
+        await update.message.reply_text(f"⏸️ Pipeline global mis en pause{(' — ' + reason) if reason else ''}")
+        logger.info(f"Pipeline mis en pause via Telegram — reason={reason}")
+    except Exception as e:
+        logger.error(f"Erreur mise en pause : {e}")
+        await _send_error(update, f"Erreur mise en pause : {e}")
+
+
+async def cmd_resume(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reprend le pipeline global — /resume"""
+    if not _is_authorized(update):
+        return
+    try:
+        set_paused(False)
+        await update.message.reply_text("▶️ Pipeline global repris — les runs automatiques reprendront.")
+        logger.info("Pipeline repris via Telegram")
+    except Exception as e:
+        logger.error(f"Erreur reprise : {e}")
+        await _send_error(update, f"Erreur reprise : {e}")
 
 
 async def cmd_validate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1890,6 +1935,8 @@ def start_bot() -> None:
 
     app.add_handler(CommandHandler("start",    cmd_start))
     app.add_handler(CommandHandler("status",   cmd_status))
+    app.add_handler(CommandHandler("pause",    cmd_pause))
+    app.add_handler(CommandHandler("resume",   cmd_resume))
     app.add_handler(CommandHandler("validate", cmd_validate))
     app.add_handler(CommandHandler("modify",   cmd_modify))
     app.add_handler(CommandHandler("schedule", cmd_schedule))
