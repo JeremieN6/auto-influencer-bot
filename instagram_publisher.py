@@ -66,7 +66,7 @@ def _check_container_status(creation_id: str) -> str:
         return "UNKNOWN"
 
     # Log brut pour faciliter le debug en cas d'erreur côté Meta
-    logger.debug(f"Container status response ({creation_id}): {data}")
+    logger.info(f"Container status raw response ({creation_id}): {data}")
 
     # Prioriser le champ 'status_code' si présent, sinon essayer d'autres clés
     return data.get("status_code") or data.get("status") or data.get("video_status") or "UNKNOWN"
@@ -394,11 +394,12 @@ def publish_story_video(video_url: str, video_filename: str) -> dict:
         if status in ("ERROR", "EXPIRED"):
             raise ValueError(f"Container Story en erreur : status={status}")
 
-        # Après le délai minimal, tenter la publication même si IN_PROGRESS
-        # (quirk connu de l'API Meta pour les Stories vidéo)
-        if i >= STORY_MIN_POLLS_BEFORE_FORCE and status == "IN_PROGRESS":
+        # Après le délai minimal, tenter la publication pour tout statut non terminal
+        # (IN_PROGRESS, UNKNOWN, PROCESSING, ou autre) — quirk API Meta Stories vidéo :
+        # le container ne passe pas toujours à FINISHED avant d'être publiable
+        if i >= STORY_MIN_POLLS_BEFORE_FORCE and status not in ("ERROR", "EXPIRED"):
             logger.warning(
-                f"Container Story IN_PROGRESS après {(i + 1) * STORY_POLL_INTERVAL}s "
+                f"Container Story statut '{status}' après {(i + 1) * STORY_POLL_INTERVAL}s "
                 f"— tentative de publication forcée (comportement normal Meta Stories)"
             )
             force_publish = True
