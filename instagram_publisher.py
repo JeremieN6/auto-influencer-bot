@@ -35,6 +35,12 @@ CONTAINER_MAX_POLLS     = 12   # max 12 * 5s = 60s d'attente — images
 REEL_MAX_POLLS          = 60   # max 60 * 10s = 600s = 10 min — vidéos (encoding plus long)
 REEL_POLL_INTERVAL      = 10   # secondes entre chaque vérif Reel
 
+# Polling Stories : comportement Meta différent des Reels
+# Les Stories restent souvent IN_PROGRESS même quand le container est publiable
+STORY_POLL_INTERVAL          = 5    # secondes entre chaque vérif Story
+STORY_MAX_POLLS              = 40   # max 40 * 5s = 200s hard timeout
+STORY_MIN_POLLS_BEFORE_FORCE = 6    # après 6 * 5s = 30s, tenter la publication même si IN_PROGRESS
+
 
 # ================================================================
 # Helpers
@@ -371,34 +377,57 @@ def publish_story_video(video_url: str, video_filename: str) -> dict:
     logger.info(f"Container Story créé : {creation_id}")
 
     # ── Étape 2 : attendre encoding ─────────────────────────────
+    # NOTE Meta API : les containers Stories restent souvent à IN_PROGRESS
+    # même lorsqu'ils sont prêts à être publiés (comportement différent des Reels).
+    # Stratégie : attente minimale de STORY_MIN_POLLS_BEFORE_FORCE * STORY_POLL_INTERVAL
+    # secondes, puis tentative de publication même si statut encore IN_PROGRESS.
     logger.info("Étape 2/3 — Attente encoding vidéo Meta (Story)")
+    force_publish = False
 
-    for i in range(REEL_MAX_POLLS):
+    for i in range(STORY_MAX_POLLS):
         status = _check_container_status(creation_id)
-        logger.debug(f"Story container status [{i+1}/{REEL_MAX_POLLS}] : {status}")
+        logger.info(f"Story container status [{i+1}/{STORY_MAX_POLLS}] : {status}")
 
         if status == "FINISHED":
-            logger.info("Container Story prêt — publication possible")
+            logger.info("Container Story prêt (FINISHED) — publication possible")
             break
         if status in ("ERROR", "EXPIRED"):
             raise ValueError(f"Container Story en erreur : status={status}")
 
-        time.sleep(REEL_POLL_INTERVAL)
+        # Après le délai minimal, tenter la publication même si IN_PROGRESS
+        # (quirk connu de l'API Meta pour les Stories vidéo)
+        if i >= STORY_MIN_POLLS_BEFORE_FORCE and status == "IN_PROGRESS":
+            logger.warning(
+                f"Container Story IN_PROGRESS après {(i + 1) * STORY_POLL_INTERVAL}s "
+                f"— tentative de publication forcée (comportement normal Meta Stories)"
+            )
+            force_publish = True
+            break
+
+        time.sleep(STORY_POLL_INTERVAL)
     else:
-        raise ValueError(f"Container Story {creation_id} non prêt après {REEL_MAX_POLLS * REEL_POLL_INTERVAL}s")
+        raise ValueError(f"Container Story {creation_id} non prêt après {STORY_MAX_POLLS * STORY_POLL_INTERVAL}s")
 
-    # ── Étape 3 : publier ────────────────────────────────────────
+    # ── Étape 3 : publier (avec retry si container signalé non prêt) ─────
     logger.info("Étape 3/3 — Publication Story")
-    r2 = requests.post(
-        f"{META_API_BASE}/{INSTAGRAM_ACCOUNT_ID}/media_publish",
-        data={
-            "creation_id":  creation_id,
-            "access_token": INSTAGRAM_ACCESS_TOKEN,
-        },
-        timeout=30,
-    )
+    publish_attempts = 3 if force_publish else 1
+    r2_data = {}
+    for attempt in range(1, publish_attempts + 1):
+        r2 = requests.post(
+            f"{META_API_BASE}/{INSTAGRAM_ACCOUNT_ID}/media_publish",
+            data={
+                "creation_id":  creation_id,
+                "access_token": INSTAGRAM_ACCESS_TOKEN,
+            },
+            timeout=30,
+        )
+        r2_data = r2.json()
+        if "id" in r2_data:
+            break
+        logger.warning(f"Publish Story tentative {attempt}/{publish_attempts} échouée : {r2_data}")
+        if attempt < publish_attempts:
+            time.sleep(15)
 
-    r2_data = r2.json()
     if "id" not in r2_data:
         logger.error(f"Erreur publication Story : {r2_data}")
         raise ValueError(f"Erreur publication Story Instagram : {r2_data}")
