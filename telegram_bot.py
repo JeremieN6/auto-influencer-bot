@@ -464,21 +464,8 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         pending_str = "⚪ Aucun contenu en attente"
 
-    # État de pause global
-    pause_info = get_pause_info()
-    if pause_info.get("paused"):
-        pause_reason = pause_info.get("reason", "")
-        pause_since = _escape_md(pause_info.get("since", "")[:16].replace("T", " "))
-        pause_str = f"⏸️ *Pipeline en PAUSE* depuis {pause_since}"
-        if pause_reason:
-            pause_str += f" — _{_escape_md(pause_reason)}_"
-        pause_str += "\nUtilise /resume pour relancer\\.\n\n"
-    else:
-        pause_str = ""
-
     text = (
         f"📊 *Status {_escape_md(INFLUENCER_NAME)}*\n\n"
-        f"{pause_str}"
         f"{pending_str}\n"
         f"{due_str}\n\n"
         f"{''.join(sched_lines)}\n"
