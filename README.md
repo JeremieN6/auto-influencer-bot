@@ -7,6 +7,27 @@ Pipeline complet : scraping Pinterest → génération image (Gemini) → captio
 
 ---
 
+## État actuel du projet
+
+- **Phase** : V1+ Content Planner (conscience éditoriale)
+- **Dernière session** : 2026-06-01
+- **Progression globale** : ~95% (pipeline VPS en production, scheduler multi-fréquence, content planner)
+- **Points clés réalisés** :
+   - Pipeline Pinterest (scraping → JSON → Gemini) et inpainting implémentés
+   - Bot Telegram (validation, `/run`, `/status`) et orchestration `main.py`
+   - Workflows vidéo (local, Pinterest, Higgsfield scaffold) et gestion des batches
+   - Génération d'images (Gemini) et captions (Claude) intégrées
+   - Pipeline déployé sur VPS en continu depuis plus d'un mois (stabilité confirmée)
+   - Commandes Telegram opérationnelles en production
+   - Noms de modèles API vérifiés
+   - Images de référence influenceuse (`data/ref_*`) déjà en place
+- **Prochaines étapes** :
+   - Finaliser la publication autonome sans `/validate` (V4)
+   - Ajouter le mode carrousel 1:1 (V4)
+   - Intégration pour vidéo Tiktok (V4)
+   - Nouveau pipleline avec récupération de vidéos virales (V4) 
+   - Renforcer l'observabilité (alerting + métriques run par run)
+
 ## Architecture rapide
 
 ```
@@ -20,7 +41,7 @@ main.py                    ← Orchestrateur (cron) — routing auto
 │   ├── workflow_video_higgsfield.py      ← Génération vidéo via Higgsfield AI
 │   ├── workflow_pinterest.py             ← Pinterest → JSON → image Gemini
 │   ├── workflow_pinterest_inpainting.py  ← Pinterest → rembg → Gemini inpainting
-│   ├── workflow_generatif.py             ← V2 scaffold (non implémenté)
+│   ├── workflow_generatif.py             ← Génération de scène (Claude) puis image
 │   └── workflow_backup.py                ← Manuel (dormant)
 ├── pinterest_scraper.py   ← Playwright
 ├── image_generator.py     ← Gemini API (génération image + IMAGE_SAFETY resilience)
