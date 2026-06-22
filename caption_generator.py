@@ -10,7 +10,7 @@ import json
 
 import anthropic
 
-from config import ANTHROPIC_API_KEY
+from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, ANTHROPIC_MODEL_FALLBACKS
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,8 +18,50 @@ logger = get_logger(__name__)
 # Initialisation du client Anthropic (une seule fois)
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-# Modèle Claude utilisé
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+# Modèles Claude utilisés (fallback auto si un modèle n'existe plus)
+CLAUDE_MODELS = [ANTHROPIC_MODEL, *ANTHROPIC_MODEL_FALLBACKS]
+
+
+def _dedupe_models(models: list[str]) -> list[str]:
+    seen = set()
+    unique = []
+    for model in models:
+        if model not in seen:
+            seen.add(model)
+            unique.append(model)
+    return unique
+
+
+CLAUDE_MODELS = _dedupe_models(CLAUDE_MODELS)
+CLAUDE_MODEL = CLAUDE_MODELS[0] if CLAUDE_MODELS else "claude-sonnet-4-0"
+
+
+def _is_model_not_found_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "not_found_error" in text or ("404" in text and "model" in text)
+
+
+def _create_message_with_fallback(max_tokens: int, messages: list[dict]):
+    """Essaie les modèles Anthropic dans l'ordre jusqu'à un succès."""
+    last_exc = None
+    for model_name in CLAUDE_MODELS:
+        try:
+            message = client.messages.create(
+                model=model_name,
+                max_tokens=max_tokens,
+                messages=messages,
+            )
+            return message, model_name
+        except anthropic.APIError as e:
+            if _is_model_not_found_error(e):
+                logger.warning(f"Modèle Claude indisponible : {model_name} — fallback")
+                last_exc = e
+                continue
+            raise
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Aucun modèle Claude configuré")
 
 
 # ================================================================
@@ -37,16 +79,16 @@ def generate_caption(caption_prompt: str, max_tokens: int = 500) -> str:
     Returns:
         Caption générée, nettoyée (strip)
     """
-    logger.info(f"Génération caption — modèle : {CLAUDE_MODEL}")
+    logger.info(f"Génération caption — modèles candidats : {', '.join(CLAUDE_MODELS)}")
     logger.debug(f"Prompt caption (extrait) : {caption_prompt[:200]}...")
 
-    message = client.messages.create(
-        model=CLAUDE_MODEL,
+    message, model_used = _create_message_with_fallback(
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": caption_prompt}],
     )
 
     caption = message.content[0].text.strip()
+    logger.info(f"Caption générée avec : {model_used}")
     logger.info(f"Caption générée ({len(caption)} chars) : {caption[:100]}...")
     return caption
 
@@ -86,13 +128,13 @@ def generate_caption_from_scene(
     
     logger.debug(f"Prompt caption contextualisée :\n{prompt[:300]}...")
     
-    message = client.messages.create(
-        model=CLAUDE_MODEL,
+    message, model_used = _create_message_with_fallback(
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
     
     caption = message.content[0].text.strip()
+    logger.info(f"Caption contextualisée générée avec : {model_used}")
     logger.info(f"Caption contextualisée générée ({len(caption)} chars) : {caption[:100]}...")
     return caption
 
@@ -180,8 +222,7 @@ def validate_custom_input(field: str, value: str, influencer_style: str) -> dict
     )
 
     try:
-        message = client.messages.create(
-            model=CLAUDE_MODEL,
+        message, _ = _create_message_with_fallback(
             max_tokens=150,
             messages=[{"role": "user", "content": prompt}],
         )

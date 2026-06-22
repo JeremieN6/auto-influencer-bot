@@ -98,6 +98,20 @@ TELEGRAM_CHAT_ID       = os.getenv("TELEGRAM_CHAT_ID")
 INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
 INSTAGRAM_ACCOUNT_ID   = os.getenv("INSTAGRAM_ACCOUNT_ID")
 
+# Anthropic models (primary + fallbacks)
+# Exemple .env :
+#   ANTHROPIC_MODEL=claude-sonnet-4-0
+#   ANTHROPIC_MODEL_FALLBACKS=claude-3-7-sonnet-latest,claude-3-5-sonnet-latest
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-0")
+ANTHROPIC_MODEL_FALLBACKS = [
+    m.strip()
+    for m in os.getenv(
+        "ANTHROPIC_MODEL_FALLBACKS",
+        "claude-3-7-sonnet-latest,claude-3-5-sonnet-latest",
+    ).split(",")
+    if m.strip()
+]
+
 # Kling AI Motion Control (workflow vidéo)
 KLING_API_KEY    = os.getenv("KLINGAI_ACCESS_KEY")
 KLING_API_SECRET = os.getenv("KLINGAI_SECRET_KEY")

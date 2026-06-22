@@ -16,7 +16,7 @@ from datetime import datetime
 
 import anthropic
 
-from config import ANTHROPIC_API_KEY, HISTORY_PATH, CALENDAR_PATH, VARIABLES_PATH
+from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, ANTHROPIC_MODEL_FALLBACKS, HISTORY_PATH, CALENDAR_PATH, VARIABLES_PATH
 from concept_generator import load_history, load_calendar, load_variables
 from logger import get_logger
 from prompts import PROMPT_CONTENT_PLANNER
@@ -24,7 +24,49 @@ from prompts import PROMPT_CONTENT_PLANNER
 logger = get_logger(__name__)
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODELS = [ANTHROPIC_MODEL, *ANTHROPIC_MODEL_FALLBACKS]
+
+
+def _dedupe_models(models: list[str]) -> list[str]:
+    seen = set()
+    unique = []
+    for model in models:
+        if model not in seen:
+            seen.add(model)
+            unique.append(model)
+    return unique
+
+
+CLAUDE_MODELS = _dedupe_models(CLAUDE_MODELS)
+CLAUDE_MODEL = CLAUDE_MODELS[0] if CLAUDE_MODELS else "claude-sonnet-4-0"
+
+
+def _is_model_not_found_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "not_found_error" in text or ("404" in text and "model" in text)
+
+
+def _create_message_with_fallback(max_tokens: int, messages: list[dict]):
+    """Essaie les modèles Anthropic dans l'ordre jusqu'à un succès."""
+    last_exc = None
+    for model_name in CLAUDE_MODELS:
+        try:
+            message = client.messages.create(
+                model=model_name,
+                max_tokens=max_tokens,
+                messages=messages,
+            )
+            return message, model_name
+        except anthropic.APIError as e:
+            if _is_model_not_found_error(e):
+                logger.warning(f"Planner : modèle indisponible '{model_name}' — fallback")
+                last_exc = e
+                continue
+            raise
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Aucun modèle Claude configuré")
 
 # Hints d'engagement par jour de la semaine (0=lundi)
 WEEKDAY_HINTS = {
@@ -241,16 +283,16 @@ def plan_content(due_types: list[dict]) -> list[dict] | None:
         return []
 
     prompt = build_planner_prompt(due_types)
-    logger.info(f"Content planner : appel Claude ({CLAUDE_MODEL})...")
+    logger.info(f"Content planner : appel Claude (candidats: {', '.join(CLAUDE_MODELS)})...")
     logger.debug(f"Prompt planner (extrait) : {prompt[:500]}...")
 
     try:
-        message = client.messages.create(
-            model=CLAUDE_MODEL,
+        message, model_used = _create_message_with_fallback(
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = message.content[0].text
+        logger.info(f"Content planner : réponse obtenue avec '{model_used}'")
         logger.debug(f"Planner raw response: {raw[:500]}...")
 
         plan = _parse_plan(raw)

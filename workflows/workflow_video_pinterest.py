@@ -96,6 +96,7 @@ def _build_video_query(
     variables: dict,
     pool_type: str = "reel",
     relevant_theme: str | None = None,
+    tried_queries: set[str] | None = None,
 ) -> str:
     """
     Construit une requête Pinterest orientée vidéo.
@@ -108,7 +109,15 @@ def _build_video_query(
     Format : pool_tag (+ keyword person optionnel si pool reel)
     """
     tag_values = _resolve_video_tags(variables, pool_type=pool_type, relevant_theme=relevant_theme)
-    chosen_tag = random.choice(tag_values)
+    random.shuffle(tag_values)
+
+    chosen_tag = tag_values[0]
+    if tried_queries:
+        for candidate in tag_values:
+            candidate_query = " ".join(candidate.split()[:4])
+            if candidate_query not in tried_queries:
+                chosen_tag = candidate
+                break
 
     # Règle : ≤ 4 mots par requête Pinterest (évite les requêtes trop spécifiques)
     words = chosen_tag.split()
@@ -376,9 +385,26 @@ def run(
         # ── Étape 1/5 : Construire la requête + scraper Pinterest ───
         log_step(__name__, 1, TOTAL_STEPS, f"Scraping vidéo Pinterest (tentative {attempt}/{MAX_REEL_RETRIES})")
 
-        query      = _build_video_query(variables, pool_type=pool_type, relevant_theme=relevant_theme)
+        query      = _build_video_query(
+            variables,
+            pool_type=pool_type,
+            relevant_theme=relevant_theme,
+            tried_queries=set(queries_tried),
+        )
         queries_tried.append(query)
-        video_path = asyncio.run(_scrape_pinterest_video(query))
+        try:
+            video_path = asyncio.run(_scrape_pinterest_video(query))
+        except Exception as e:
+            logger.warning(
+                f"Scraping vidéo Pinterest échoué pour '{query}' "
+                f"(tentative {attempt}/{MAX_REEL_RETRIES}) : {e}"
+            )
+            if attempt < MAX_REEL_RETRIES:
+                continue
+            raise RuntimeError(
+                "Aucune vidéo Pinterest exploitable après plusieurs tentatives. "
+                f"Requêtes testées : {queries_tried}"
+            ) from e
         logger.info(f"Vidéo Pinterest récupérée : {video_path}")
 
         # ── Vérification plans continus (requis par Kling ≥ 3s) ─────
