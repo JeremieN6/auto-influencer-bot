@@ -136,7 +136,6 @@ async def _extract_video_url_from_pin(page, pin_url: str) -> str | None:
         v.pinimg.com/videos/mc/720p/XX/XX/XXXXX.mp4
     """
     import asyncio
-    import asyncio
     import re as _re
 
     def _normalize_video_url(raw_url: str) -> str:
@@ -149,29 +148,25 @@ async def _extract_video_url_from_pin(page, pin_url: str) -> str | None:
             .replace("\\", "")
         )
 
+    try:
         await page.goto(pin_url, wait_until="domcontentloaded", timeout=20_000)
         await asyncio.sleep(random.uniform(1.5, 2.5))
 
         # Chercher dans le JSON embarqué (__PWS_DATA__ ou __PWS_INITIAL_STATE__)
         content = await page.content()
         matches = _re.findall(
-        matches = _re.findall(
-            content
+            r'https?://v\d*\.pinimg\.com[^"\'<>\s\\]*\.mp4[^"\'<>\s\\]*',
+            content,
         )
-        if matches:
-            # Préférer les 720p, sinon prendre la première
-            for m in matches:
 
         # Certaines pages encodent les URLs en mode échappé (https:\/\/...)
         escaped_matches = _re.findall(
-            r'https?:\\\\/\\\\/v\d*\.pinimg\.com[^"\'<>
-                if "720p" in m or "1080p" in m:
-                    return m
+            r'https?:\\\\/\\\\/v\d*\.pinimg\.com[^"\'<>\s]*?\.mp4[^"\'<>\s]*',
             content,
         )
         matches.extend(_normalize_video_url(m) for m in escaped_matches)
 
-            return matches[0]
+        if matches:
             # Dédupliquer tout en conservant l'ordre
             deduped = []
             seen = set()
@@ -180,11 +175,14 @@ async def _extract_video_url_from_pin(page, pin_url: str) -> str | None:
                     seen.add(m)
                     deduped.append(m)
 
-    except Exception as e:
+            # Préférer les 720p/1080p, sinon prendre la première
             for m in deduped:
-    return None
-
+                if "720p" in m or "1080p" in m:
+                    return m
             return deduped[0]
+    except Exception as e:
+        logger.warning(f"Erreur lecture pin {pin_url} : {e}")
+    return None
 async def _scrape_pinterest_video(query: str) -> str:
     """
     Recherche sur Pinterest et télécharge la première vidéo .mp4 trouvée.
@@ -222,8 +220,23 @@ async def _scrape_pinterest_video(query: str) -> str:
 
     logger.info(f"Navigation Pinterest vidéo — requête: '{query}'")
 
+    async def _launch_chromium_with_retry(playwright, retries: int = 2):
+        last_error = None
+        for attempt in range(1, retries + 1):
+            try:
+                return await playwright.chromium.launch(
+                    headless=True,
+                    args=["--disable-dev-shm-usage", "--no-sandbox"],
+                )
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Chromium launch échoué (tentative {attempt}/{retries}) : {e}")
+                if attempt < retries:
+                    await asyncio.sleep(1.0)
+        raise RuntimeError(f"Impossible de lancer Chromium après {retries} tentatives: {last_error}")
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await _launch_chromium_with_retry(p)
         context = await browser.new_context(
             user_agent=random.choice(USER_AGENTS),
             viewport={"width": 1280, "height": 800},
@@ -537,6 +550,11 @@ def run(
             )
         log_step(__name__, 4, TOTAL_STEPS, "Analyse scène + génération image Madison")
 
+        # Fallback sécurité : certaines branches peuvent arriver ici sans frame extraite.
+        if not frame_path or not os.path.exists(frame_path):
+            logger.warning("Aucune frame disponible pour l'analyse scène — extraction d'une frame de secours")
+            frame_path = extract_best_frame(video_path)
+
         scene_json = image_to_json(frame_path)
         logger.info(f"JSON de scène extrait — clés : {list(scene_json.keys())}")
 
@@ -620,6 +638,10 @@ def run(
             )
         log_step(__name__, 4, TOTAL_STEPS, "Flux ambiance : vidéo brute")
         log_step(__name__, 5, TOTAL_STEPS, "Génération caption ambiance")
+
+        if not frame_path or not os.path.exists(frame_path):
+            logger.warning("Aucune frame disponible en flux ambiance — extraction d'une frame de secours")
+            frame_path = extract_best_frame(video_path)
 
         scene_json = image_to_json(frame_path)
         logger.info(f"JSON de scène ambiance extrait — clés : {list(scene_json.keys())}")
