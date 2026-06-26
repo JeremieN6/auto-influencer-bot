@@ -136,28 +136,55 @@ async def _extract_video_url_from_pin(page, pin_url: str) -> str | None:
         v.pinimg.com/videos/mc/720p/XX/XX/XXXXX.mp4
     """
     import asyncio
+    import asyncio
     import re as _re
-    try:
+
+    def _normalize_video_url(raw_url: str) -> str:
+        """Normalise les URLs échappées extraites du HTML Pinterest."""
+        return (
+            raw_url
+            .replace("\\\\/", "/")
+            .replace("\\/", "/")
+            .replace("\\u002F", "/")
+            .replace("\\", "")
+        )
+
         await page.goto(pin_url, wait_until="domcontentloaded", timeout=20_000)
         await asyncio.sleep(random.uniform(1.5, 2.5))
 
         # Chercher dans le JSON embarqué (__PWS_DATA__ ou __PWS_INITIAL_STATE__)
         content = await page.content()
         matches = _re.findall(
-            r'https?://v\d*\.pinimg\.com[^"\'<>\s\\]*\.mp4[^"\'<>\s\\]*',
+        matches = _re.findall(
             content
         )
         if matches:
             # Préférer les 720p, sinon prendre la première
             for m in matches:
+
+        # Certaines pages encodent les URLs en mode échappé (https:\/\/...)
+        escaped_matches = _re.findall(
+            r'https?:\\\\/\\\\/v\d*\.pinimg\.com[^"\'<>
                 if "720p" in m or "1080p" in m:
                     return m
+            content,
+        )
+        matches.extend(_normalize_video_url(m) for m in escaped_matches)
+
             return matches[0]
+            # Dédupliquer tout en conservant l'ordre
+            deduped = []
+            seen = set()
+            for m in matches:
+                if m not in seen:
+                    seen.add(m)
+                    deduped.append(m)
+
     except Exception as e:
-        logger.warning(f"Erreur lecture pin {pin_url} : {e}")
+            for m in deduped:
     return None
 
-
+            return deduped[0]
 async def _scrape_pinterest_video(query: str) -> str:
     """
     Recherche sur Pinterest et télécharge la première vidéo .mp4 trouvée.
@@ -184,12 +211,16 @@ async def _scrape_pinterest_video(query: str) -> str:
     from config import OUTPUTS_DIR
     from pinterest_scraper import USER_AGENTS
 
-    PINTEREST_SEARCH_URL = "https://www.pinterest.com/search/videos/?q={query}"
-    PINTEREST_BASE        = "https://www.pinterest.com"
-    encoded_q             = urllib.parse.quote(query)
-    search_url            = PINTEREST_SEARCH_URL.format(query=encoded_q)
+    PINTEREST_VIDEO_SEARCH_URL = "https://www.pinterest.com/search/videos/?q={query}"
+    PINTEREST_PINS_SEARCH_URL  = "https://www.pinterest.com/search/pins/?q={query}"
+    PINTEREST_BASE             = "https://www.pinterest.com"
+    encoded_q                  = urllib.parse.quote(query)
+    search_urls                = [
+        PINTEREST_VIDEO_SEARCH_URL.format(query=encoded_q),
+        PINTEREST_PINS_SEARCH_URL.format(query=encoded_q),
+    ]
 
-    logger.info(f"Navigation Pinterest vidéo → {search_url}")
+    logger.info(f"Navigation Pinterest vidéo — requête: '{query}'")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -200,26 +231,42 @@ async def _scrape_pinterest_video(query: str) -> str:
         page = await context.new_page()
 
         try:
-            # ── Étape 1 : page de recherche → collecter les hrefs de pins ──
-            await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
+            # ── Étape 1 : pages de recherche → collecter les hrefs de pins ──
+            pin_hrefs: list[str] = []
+            seen_hrefs: set[str] = set()
 
-            # Scroll pour charger plus de pins
-            for _ in range(4):
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
-                await asyncio.sleep(random.uniform(1.0, 1.8))
+            for search_url in search_urls:
+                logger.info(f"Navigation recherche Pinterest → {search_url}")
+                await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
 
-            pin_hrefs: list[str] = await page.evaluate("""
-                () => {
-                    const links = new Set();
-                    document.querySelectorAll('a[href*="/pin/"]').forEach(a => {
-                        const href = a.getAttribute('href');
-                        if (href && /^\\/pin\\/\\d+/.test(href)) links.add(href);
-                    });
-                    return [...links].slice(0, 10);
-                }
-            """)
+                # Scroll plus profond : Pinterest charge souvent les vidéos tardivement.
+                for _ in range(7):
+                    await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    await asyncio.sleep(random.uniform(0.9, 1.6))
 
-            logger.info(f"{len(pin_hrefs)} hrefs de pins collectés")
+                hrefs_from_page: list[str] = await page.evaluate("""
+                    () => {
+                        const links = new Set();
+                        document.querySelectorAll('a[href*="/pin/"]').forEach(a => {
+                            const href = a.getAttribute('href');
+                            if (href && /^\/pin\/\d+/.test(href)) links.add(href);
+                        });
+                        return [...links];
+                    }
+                """)
+
+                for href in hrefs_from_page:
+                    if href not in seen_hrefs:
+                        seen_hrefs.add(href)
+                        pin_hrefs.append(href)
+
+                logger.info(
+                    f"{len(hrefs_from_page)} hrefs détectés sur cette page, "
+                    f"{len(pin_hrefs)} cumulés"
+                )
+
+                if len(pin_hrefs) >= 30:
+                    break
 
             if not pin_hrefs:
                 raise RuntimeError(
@@ -229,14 +276,24 @@ async def _scrape_pinterest_video(query: str) -> str:
 
             # ── Étape 2 : visiter chaque pin pour extraire l'URL vidéo ──────
             video_url: str | None = None
-            for href in pin_hrefs:
-                pin_url = PINTEREST_BASE + href
-                logger.info(f"Lecture pin : {pin_url}")
-                video_url = await _extract_video_url_from_pin(page, pin_url)
+            random.shuffle(pin_hrefs)
+            for href in pin_hrefs[:30]:
+                base_pin_url = PINTEREST_BASE + href
+                candidate_urls = [
+                    base_pin_url,
+                    f"{base_pin_url.rstrip('/')}/video/",
+                ]
+
+                for pin_url in candidate_urls:
+                    logger.info(f"Lecture pin : {pin_url}")
+                    video_url = await _extract_video_url_from_pin(page, pin_url)
+                    if video_url:
+                        logger.info(f"URL vidéo trouvée : {video_url}")
+                        break
+                    await asyncio.sleep(random.uniform(0.6, 1.2))
+
                 if video_url:
-                    logger.info(f"URL vidéo trouvée : {video_url}")
                     break
-                await asyncio.sleep(random.uniform(0.8, 1.5))
 
         finally:
             await browser.close()
