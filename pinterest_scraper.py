@@ -102,6 +102,23 @@ def _random_delay(min_s: float = DELAY_MIN, max_s: float = DELAY_MAX) -> None:
     time.sleep(delay)
 
 
+async def _launch_chromium_with_retry(playwright, retries: int = 2):
+    """Lance Chromium avec une relance courte si le driver se ferme au démarrage."""
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            return await playwright.chromium.launch(
+                headless=True,
+                args=["--disable-dev-shm-usage", "--no-sandbox"],
+            )
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Chromium launch échoué (tentative {attempt}/{retries}) : {e}")
+            if attempt < retries:
+                await asyncio.sleep(1.0)
+    raise RuntimeError(f"Impossible de lancer Chromium après {retries} tentatives: {last_error}")
+
+
 def _upgrade_image_quality(url: str) -> str:
     """
     Transforme les URLs thumbnails Pinterest en haute qualité.
@@ -421,7 +438,7 @@ async def _scrape_async(concept: dict, keyword_pool: list[str] | None = None) ->
             user_agent = random.choice(USER_AGENTS)
             logger.info(f"Stratégie : {strategy['label']} | UA : {user_agent[:50]}...")
 
-            browser = await pw.chromium.launch(headless=True)
+            browser = await _launch_chromium_with_retry(pw)
             context = await browser.new_context(
                 user_agent=user_agent,
                 viewport={"width": 1280, "height": 900},
@@ -555,7 +572,7 @@ async def _scrape_pin_image_async(pin_url: str) -> str:
     import json as _json
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await _launch_chromium_with_retry(p)
         try:
             ua = random.choice(USER_AGENTS)
             context = await browser.new_context(
