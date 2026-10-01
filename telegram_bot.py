@@ -396,6 +396,67 @@ async def _send_error(update: Update, msg: str) -> None:
 
 
 # ================================================================
+# Pause globale — bouton toggle
+# ================================================================
+
+def _pause_keyboard() -> InlineKeyboardMarkup:
+    """Bouton unique qui bascule la pause selon l'état courant."""
+    if is_paused():
+        button = InlineKeyboardButton("▶️ Reprendre la génération", callback_data="pause_off")
+    else:
+        button = InlineKeyboardButton("⏸️ Mettre en pause la génération", callback_data="pause_on")
+    return InlineKeyboardMarkup([[button]])
+
+
+def _pause_status_text() -> str:
+    """Texte brut décrivant l'état de pause (sans Markdown)."""
+    if not is_paused():
+        return "▶️ Génération ACTIVE — le cron et les commandes peuvent lancer des générations."
+    info = get_pause_info()
+    since = str(info.get("since", ""))[:16].replace("T", " ")
+    reason = info.get("reason") or ""
+    return (
+        f"⏸️ Génération EN PAUSE depuis {since}{(' — ' + reason) if reason else ''}\n"
+        f"Aucun appel Gemini ne part (cron, /run, /modify, /retryKling bloqués)."
+    )
+
+
+async def _block_if_paused(update: Update) -> bool:
+    """Répond et retourne True si la pause est active — à appeler avant toute génération."""
+    if not is_paused():
+        return False
+    await update.effective_message.reply_text(
+        f"{_pause_status_text()}\n\nReprends d'abord pour lancer une génération.",
+        reply_markup=_pause_keyboard(),
+    )
+    return True
+
+
+async def handle_pause_toggle(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Callback du bouton ⏸️/▶️ — pause_on / pause_off."""
+    query = update.callback_query
+    await query.answer()
+
+    if not _is_authorized(update):
+        return
+
+    paused = query.data == "pause_on"
+    try:
+        if paused:
+            by = str(update.effective_user.id) if update.effective_user else "telegram"
+            set_paused(True, reason="bouton Telegram", by=by)
+        else:
+            set_paused(False)
+    except Exception as e:
+        logger.error(f"Erreur bascule pause : {e}")
+        await query.message.reply_text(f"❌ Erreur bascule pause : {e}")
+        return
+
+    logger.info(f"Pause {'activée' if paused else 'désactivée'} via bouton Telegram")
+    await query.message.reply_text(_pause_status_text(), reply_markup=_pause_keyboard())
+
+
+# ================================================================
 # Commandes V1
 # ================================================================
 
@@ -415,8 +476,13 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"/manualGeneration — Générer depuis une image ou vidéo source\n"
         f"/retryKling — Relancer Kling si la dernière vidéo a échoué\n"
         f"/generate — Alias legacy vers /run\n"
+        f"/pause — Couper toute génération \\(cron inclus\\)\n"
+        f"/resume — Reprendre la génération\n\n"
+        f"{_escape_md(_pause_status_text())}"
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(
+        text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=_pause_keyboard()
+    )
 
 
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -466,12 +532,15 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     text = (
         f"📊 *Status {_escape_md(INFLUENCER_NAME)}*\n\n"
+        f"{_escape_md(_pause_status_text())}\n\n"
         f"{pending_str}\n"
         f"{due_str}\n\n"
         f"{''.join(sched_lines)}\n"
         f"📈 Total posts historique : {len(history)}"
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(
+        text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=_pause_keyboard()
+    )
 
 
 async def cmd_pause(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -485,7 +554,7 @@ async def cmd_pause(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         reason = parts[1].strip()
     try:
         set_paused(True, reason=reason, by=str(update.effective_user.id) if update.effective_user else "telegram")
-        await update.message.reply_text(f"⏸️ Pipeline global mis en pause{(' — ' + reason) if reason else ''}")
+        await update.message.reply_text(_pause_status_text(), reply_markup=_pause_keyboard())
         logger.info(f"Pipeline mis en pause via Telegram — reason={reason}")
     except Exception as e:
         logger.error(f"Erreur mise en pause : {e}")
@@ -498,7 +567,7 @@ async def cmd_resume(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
     try:
         set_paused(False)
-        await update.message.reply_text("▶️ Pipeline global repris — les runs automatiques reprendront.")
+        await update.message.reply_text(_pause_status_text(), reply_markup=_pause_keyboard())
         logger.info("Pipeline repris via Telegram")
     except Exception as e:
         logger.error(f"Erreur reprise : {e}")
@@ -554,6 +623,9 @@ async def cmd_modify(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             "Usage : /modify <instruction>\n"
             "Exemple : /modify rendre la lumière plus chaude, ton soleil couchant"
         )
+        return
+
+    if await _block_if_paused(update):
         return
 
     instruction = text_parts[1].strip()
@@ -627,6 +699,8 @@ async def cmd_generate(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 async def cmd_retry_kling(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Relance l'étape Kling depuis l'état intermédiaire — /retryKling"""
     if not _is_authorized(update):
+        return
+    if await _block_if_paused(update):
         return
 
     state = load_pending_state()
@@ -742,6 +816,8 @@ def _make_keyboard(options: list[str], cols: int = 2) -> InlineKeyboardMarkup:
 async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     """Lancement manuel avec choix workflow et paramètres — /run"""
     if not _is_authorized(update):
+        return ConversationHandler.END
+    if await _block_if_paused(update):
         return ConversationHandler.END
 
     # Plus de blocage sur pending_state — la queue permet plusieurs posts en attente
@@ -1478,6 +1554,8 @@ async def cmd_manual_generation(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     """Point d'entrée /manualGeneration — demande le type de contenu."""
     if not _is_authorized(update):
         return ConversationHandler.END
+    if await _block_if_paused(update):
+        return ConversationHandler.END
 
     # Plus de blocage sur pending_state — la queue permet plusieurs posts en attente
 
@@ -1936,6 +2014,7 @@ def start_bot() -> None:
     app.add_handler(CallbackQueryHandler(handle_validate_image, pattern="^val_img_"))
     app.add_handler(CallbackQueryHandler(handle_publish_video, pattern="^pub_(reel|tiktok|both|story)_"))
     app.add_handler(CallbackQueryHandler(handle_delete_from_queue, pattern="^del_"))
+    app.add_handler(CallbackQueryHandler(handle_pause_toggle, pattern="^pause_(on|off)$"))
 
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Log et notifie l'utilisateur en cas d'erreur dans un handler."""

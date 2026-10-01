@@ -64,3 +64,33 @@ def get_pause_info() -> dict:
             return json.load(f)
     except Exception:
         return {"paused": False}
+
+
+class PipelinePausedError(BaseException):
+    """Levée quand un appel payant est tenté alors que la pause est active.
+
+    Hérite de BaseException (et non Exception) pour ne pas être avalée par les
+    boucles de retry `except Exception` des générateurs.
+    """
+
+
+def ensure_not_paused() -> None:
+    """Lève PipelinePausedError si la pause globale est active."""
+    if is_paused():
+        raise PipelinePausedError("Pipeline en pause — appel API bloqué")
+
+
+def guard_gemini_client(client):
+    """Fait vérifier la pause avant chaque `client.models.generate_content`.
+
+    Coupe-circuit au plus près de la facturation : même un run déjà lancé
+    s'arrête au prochain appel Gemini dès que la pause est activée.
+    """
+    original = client.models.generate_content
+
+    def _guarded(*args, **kwargs):
+        ensure_not_paused()
+        return original(*args, **kwargs)
+
+    client.models.generate_content = _guarded
+    return client

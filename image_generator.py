@@ -39,6 +39,7 @@ from config import (
     OUTPUTS_DIR,
 )
 from logger import get_logger
+from pause_manager import guard_gemini_client
 
 logger = get_logger(__name__)
 
@@ -46,7 +47,7 @@ logger = get_logger(__name__)
 REF_IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".avif"]
 
 # Client Gemini singleton
-_client = genai.Client(api_key=GEMINI_API_KEY)
+_client = guard_gemini_client(genai.Client(api_key=GEMINI_API_KEY))
 
 
 class ImageSafetyError(ValueError):

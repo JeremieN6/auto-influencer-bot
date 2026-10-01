@@ -168,4 +168,6 @@ HISTORY_PATH          = f"{DATA_DIR}/history.json"
 CALENDAR_PATH         = f"{DATA_DIR}/calendar.json"
 PENDING_STATE_PATH    = f"{DATA_DIR}/pending_state.json"
 VIDEO_HISTORY_PATH    = f"{DATA_DIR}/video_history.json"
-PAUSE_STATE_PATH      = f"{DATA_DIR}/pause_state.json"
+# Chemin absolu : le bot (systemd) et le pipeline (cron) doivent lire le même fichier
+# quel que soit leur répertoire de travail.
+PAUSE_STATE_PATH      = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "pause_state.json")

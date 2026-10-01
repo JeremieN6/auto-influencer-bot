@@ -43,11 +43,12 @@ from config import (
 )
 from image_generator import ImageSafetyError, _is_transient_gemini_error, _sanitize_prompt_for_safety
 from logger import get_logger
+from pause_manager import guard_gemini_client
 
 logger = get_logger(__name__)
 
 # Client Gemini singleton (partagé avec image_generator.py si importé — pas de double init)
-_client = genai.Client(api_key=GEMINI_API_KEY)
+_client = guard_gemini_client(genai.Client(api_key=GEMINI_API_KEY))
 
 # ================================================================
 # Template prompt inpainting

@@ -38,6 +38,7 @@ from concept_generator import (
     save_history,
 )
 from logger import log, log_section, setup_logger
+from pause_manager import PipelinePausedError
 from telegram_bot import save_pending_state, send_for_validation, send_video_for_validation
 
 
@@ -873,17 +874,21 @@ if __name__ == "__main__":
     setup_logger()
     args = _parse_args()
 
-    # ── Guard pause global — empêche les runs automatiques quand activé
+    # ── Guard pause global — bloque TOUS les runs (cron, /run --force, /retryKling)
+    # tant que la pause est active : aucune génération payante ne doit partir.
     try:
         from pause_manager import is_paused, get_pause_info
 
-        if is_paused() and not args.force and not args.resume_kling:
+        if is_paused():
             info = get_pause_info()
             reason = info.get("reason", "")
             since = info.get("since", "")
             log("info", "main", f"Pipeline global en pause depuis {since} — raison: {reason}")
             try:
-                asyncio.run(_send_telegram_info(f"Pipeline global en pause — raison: {reason}"))
+                asyncio.run(_send_telegram_info(
+                    f"⏸️ Run ignoré : pipeline en pause{(' — ' + reason) if reason else ''}. "
+                    f"Aucune génération lancée. /resume pour reprendre."
+                ))
             except Exception:
                 pass
             sys.exit(0)
@@ -1158,6 +1163,15 @@ if __name__ == "__main__":
                 log("error", "main", f"Notification Telegram d'erreur également échouée : {notify_err}")
 
             sys.exit(1)
+
+    except PipelinePausedError:
+        # Pause activée pendant le run : le coupe-circuit Gemini a stoppé la génération.
+        log("info", "main", "Pause activée en cours de run — pipeline arrêté avant le prochain appel Gemini")
+        try:
+            asyncio.run(_send_telegram_info("⏸️ Run en cours arrêté : la pause a coupé la génération."))
+        except Exception:
+            pass
+        sys.exit(0)
 
     finally:
         # Libérer le lock dans tous les cas (succès, erreur, KeyboardInterrupt)

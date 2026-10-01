@@ -59,6 +59,8 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
 
 ## Blocages et Points d Attention
 <!-- Lister ici -->
+- (2026-10-01) Projet GCP « Automatisation Bot Insta » (`gen-lang-client-0287451818`) facture encore Gemini (~40 €/sept.) alors que le bot n'appelle plus Gemini depuis le 10/08 → consommateur inconnu de la clé à identifier, ou rotation de la clé.
+- `logs/run.log` ~4,3 Go sur le VPS (DEBUG httpcore), pas de rotation.
 
 ---
 
@@ -84,6 +86,12 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
 
 ## Notes de Session
 > Ajouter ici un resume a la fin de chaque session de travail.
+
+### Session 2026-10-01 — Pause « dure » + bouton Telegram
+- Prod réelle : `/srv/saas/auto-influencer-bot` (pas `/opt/mybots/...`), cron `0 */12 * * *`, VPS resté au commit `0aade4b`.
+- Diagnostic : pause active depuis le 2026-08-11, respectée par le cron ; dernier appel Gemini du bot dans `run.log` = 2026-08-10. Les coûts Gemini de septembre (projet GCP « Automatisation Bot Insta ») viennent donc d'un AUTRE consommateur de la clé/du projet — à identifier.
+- Ajouté : bouton inline ⏸️/▶️ (`/start`, `/status`, `/pause`, `/resume`), la pause bloque aussi `--force`/`--resume-kling`/`--dry-run`, `/run`, `/manualGeneration`, `/modify`, `/retryKling`, coupe-circuit `guard_gemini_client` sur chaque `generate_content`, `PAUSE_STATE_PATH` absolu.
+- Point d'attention : `logs/run.log` fait ~4,3 Go (logs DEBUG httpcore du polling Telegram), pas de rotation.
 
 ### Session 2026-03-04 — Implémentation complète V1
 - Développé l'intégralité du projet depuis les specs AI_INFLUENCER_AUTOMATION.md

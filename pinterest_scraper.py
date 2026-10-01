@@ -24,6 +24,7 @@ from playwright.async_api import async_playwright, BrowserContext, Page
 
 from config import GEMINI_API_KEY, GEMINI_MODEL_VISION, OUTPUTS_DIR
 from logger import get_logger
+from pause_manager import guard_gemini_client
 
 logger = get_logger(__name__)
 
@@ -297,7 +298,7 @@ def _detect_person_in_image(image_path: str) -> bool:
     import io
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = guard_gemini_client(genai.Client(api_key=GEMINI_API_KEY))
 
         # Charger + convertir en bytes (libère le handle)
         img = Image.open(image_path).copy()
@@ -338,7 +339,7 @@ def _detect_upper_body_visible(image_path: str) -> bool:
     import io
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = guard_gemini_client(genai.Client(api_key=GEMINI_API_KEY))
 
         img = Image.open(image_path).copy()
         if img.mode in ("RGBA", "P", "LA"):
