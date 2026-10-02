@@ -59,7 +59,7 @@ Hébergement image temporaire : Nginx (VPS)Automatisation : Cron + Systemd
 
 ## Blocages et Points d Attention
 <!-- Lister ici -->
-- (2026-10-01) Projet GCP « Automatisation Bot Insta » (`gen-lang-client-0287451818`) facture encore Gemini (~40 €/sept.) alors que le bot n'appelle plus Gemini depuis le 10/08 → consommateur inconnu de la clé à identifier, ou rotation de la clé.
+- (2026-10-01) Projet GCP « Automatisation Bot Insta » (`gen-lang-client-0287451818`) facture encore Gemini (~40 €/sept.) alors que le bot n'appelle plus Gemini depuis le 10/08 → consommateur identifié le 2026-10-02 : **Plotline** (`/srv/saas/plotline`, PM2 `plotline`) utilise la même `GEMINI_API_KEY` (aussi figée dans son build `.output/.../nitro.mjs`). Donner une clé/un projet GCP dédié à Plotline pour séparer les coûts (rebuild Plotline nécessaire).
 - (corrigé 2026-10-02) `logs/run.log` avait atteint ~4,3 Go (DEBUG httpcore du polling Telegram) → libs bruyantes passées en WARNING dans `logger.py`, `WatchedFileHandler`, logrotate installé depuis `deploy/logrotate-auto-influencer-bot` (50M max, 14 rotations, gzip).
 
 ---
