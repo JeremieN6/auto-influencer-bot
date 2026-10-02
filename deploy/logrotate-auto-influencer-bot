@@ -1,0 +1,16 @@
+# Rotation des logs du bot — à installer dans /etc/logrotate.d/auto-influencer-bot
+# run.log : écrit par le bot (systemd) et le pipeline (cron) via WatchedFileHandler,
+#           qui rouvre le fichier après déplacement → pas besoin de copytruncate.
+# cron.log : redirection shell du cron (>>), rouvert à chaque run.
+/srv/saas/auto-influencer-bot/logs/run.log
+/srv/saas/auto-influencer-bot/logs/cron.log
+{
+    su www-data www-data
+    daily
+    maxsize 50M
+    rotate 14
+    compress
+    missingok
+    notifempty
+    create 0644 www-data www-data
+}

@@ -8,8 +8,24 @@ Note : une fois le système stable en production, réduire level à WARNING.
 """
 
 import logging
+import logging.handlers
 import os
 from config import LOG_PATH
+
+# Bibliothèques trop bavardes en DEBUG : le polling Telegram loguait chaque
+# requête HTTP (httpcore/httpx), ce qui a fait grossir run.log à plusieurs Go.
+_NOISY_LOGGERS = {
+    "httpcore": logging.WARNING,
+    "httpx": logging.WARNING,
+    "hpack": logging.WARNING,
+    "urllib3": logging.WARNING,
+    "asyncio": logging.WARNING,
+    "PIL": logging.WARNING,
+    "google_genai": logging.WARNING,
+    "anthropic": logging.WARNING,
+    "telegram": logging.INFO,
+    "apscheduler": logging.WARNING,
+}
 
 
 def setup_logger() -> None:
@@ -22,15 +38,22 @@ def setup_logger() -> None:
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
 
+    for name, level in _NOISY_LOGGERS.items():
+        logging.getLogger(name).setLevel(level)
+
     # Formatter commun
     fmt = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Handler fichier — tout en DEBUG
+    # Handler fichier — tout en DEBUG.
+    # WatchedFileHandler (Linux) rouvre le fichier quand logrotate le déplace :
+    # bot (systemd) et pipeline (cron) écrivent dans le même run.log, donc la
+    # rotation est confiée à logrotate plutôt qu'à un RotatingFileHandler.
     if not any(isinstance(h, logging.FileHandler) for h in root_logger.handlers):
-        fh = logging.FileHandler(LOG_PATH, encoding="utf-8")
+        handler_cls = logging.handlers.WatchedFileHandler if os.name != "nt" else logging.FileHandler
+        fh = handler_cls(LOG_PATH, encoding="utf-8")
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(fmt)
         root_logger.addHandler(fh)
